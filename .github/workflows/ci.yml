@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      searx:
+        image: searxng/searxng:latest
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd "curl -f http://localhost:8080/search?q=test&format=json || exit 1" \
+          --health-interval 10s \
+          --health-timeout 5s \
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      - name: Run Go unit tests
+        run: |
+          cd backend
+          go test ./...
+
+      - name: Run Go integration tests
+        env:
+          SEARX_URL: http://localhost:8080
+        run: |
+          cd backend
+          go test -tags=integration ./...
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend deps & run build
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Lint Vue (eslint placeholder)
+        run: echo "Add ESLint if configured"
+
+      - name: Build Docker images (optional)
+        if: ${{ github.event_name == 'push' }}
+        run: docker compose -f deploy/docker-compose.yml build --parallel
