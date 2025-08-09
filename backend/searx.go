@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,15 +21,21 @@ type searxResponse struct {
 	Results []searxResultItem `json:"results"`
 }
 
-func searchSearx(searxBase, query string, engines []string) ([]SearchResult, error) {
+func searchSearx(ctx context.Context, searxBase, query string, engines []string) ([]SearchResult, error) {
 	base := strings.TrimRight(searxBase, "/")
 	endpoint := fmt.Sprintf("%s/search?q=%s&format=json", base, url.QueryEscape(query))
 	if len(engines) > 0 {
 		// SearxNG accepts engines as comma-separated list
 		endpoint += "&engines=" + url.QueryEscape(strings.Join(engines, ","))
 	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Get(endpoint)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

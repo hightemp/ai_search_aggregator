@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +31,7 @@ type openRouterResponse struct {
 
 var openRouterEndpoint = "https://openrouter.ai/api/v1/chat/completions"
 
-func generateQueriesWithOpenRouter(prompt string, n int, apiKey string) ([]string, error) {
+func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, apiKey string) ([]string, error) {
 	if apiKey == "" {
 		return nil, errors.New("OPENROUTER_API_KEY not set")
 	}
@@ -47,7 +48,7 @@ func generateQueriesWithOpenRouter(prompt string, n int, apiKey string) ([]strin
 	}
 
 	b, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequest("POST", openRouterEndpoint, bytes.NewReader(b))
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", openRouterEndpoint, bytes.NewReader(b))
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Search Aggregator")
@@ -90,7 +91,7 @@ func generateQueriesWithOpenRouter(prompt string, n int, apiKey string) ([]strin
 
 // filterByAIRelevance uses the LLM to classify which search results are relevant to the user's prompt.
 // It returns only those predicted as relevant while preserving order.
-func filterByAIRelevance(prompt string, results []SearchResult, apiKey string) ([]SearchResult, error) {
+func filterByAIRelevance(ctx context.Context, prompt string, results []SearchResult, apiKey string) ([]SearchResult, error) {
 	if apiKey == "" {
 		return nil, errors.New("OPENROUTER_API_KEY not set")
 	}
@@ -127,7 +128,7 @@ func filterByAIRelevance(prompt string, results []SearchResult, apiKey string) (
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequest("POST", openRouterEndpoint, bytes.NewReader(payload))
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", openRouterEndpoint, bytes.NewReader(payload))
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Relevance Filter")
@@ -202,7 +203,7 @@ func truncateForLLM(s string, max int) string {
 
 // isContentRelevantToPrompt judges a single page content for relevance to the user's query.
 // Returns true if relevant, false otherwise.
-func isContentRelevantToPrompt(prompt, title, url, content, apiKey string) (bool, error) {
+func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content, apiKey string) (bool, error) {
 	if apiKey == "" {
 		return false, errors.New("OPENROUTER_API_KEY not set")
 	}
@@ -228,7 +229,7 @@ func isContentRelevantToPrompt(prompt, title, url, content, apiKey string) (bool
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequest("POST", openRouterEndpoint, bytes.NewReader(payload))
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", openRouterEndpoint, bytes.NewReader(payload))
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Single Content Relevance")

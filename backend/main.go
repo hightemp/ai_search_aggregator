@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -39,8 +40,13 @@ type SearchResponse struct {
 
 func main() {
 	cfg := loadConfig()
+	logger := NewLogger()
 
 	r := chi.NewRouter()
+
+	// Middleware
+	r.Use(RecoveryMiddleware)
+	r.Use(LoggingMiddleware(logger))
 
 	// Very permissive CORS for the MVP
 	r.Use(cors.Handler(cors.Options{
@@ -57,24 +63,79 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// Handler closure captures cfg
+	// Handler closure captures cfg and logger
 	r.Post("/api/search", func(w http.ResponseWriter, r *http.Request) {
-		handleSearch(w, r, cfg)
+		handleSearch(w, r, cfg, logger)
 	})
 
-	log.Printf("starting server on :%s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
-		log.Fatal(err)
+	server := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      r,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
+
+	// Graceful shutdown
+	go func() {
+		logger.Info("starting server", "port", cfg.Port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("server failed to start", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("shutting down server")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Error("server forced to shutdown", "error", err)
+		os.Exit(1)
+	}
+
+	logger.Info("server exited")
 }
 
-func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
+func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig, logger *Logger) {
 	startedAt := time.Now()
-	rid := fmt.Sprintf("%d", time.Now().UnixNano())
+	type requestIDKey string
+	const ridKey requestIDKey = "request_id"
+	rid, _ := r.Context().Value(ridKey).(string)
+	if rid == "" {
+		rid = generateRequestID()
+	}
+	reqLogger := logger.WithRequestID(rid)
+
+	// Устанавливаем общий тайм-аут для запроса
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+
 	var req SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("rid=%s decode_error err=%v", rid, err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		reqLogger.Error("failed to decode request", err)
+		ErrorResponse(w, WrapError(ErrInvalidRequest, err))
+		return
+	}
+
+	// Санитизация входных данных
+	SanitizeSearchRequest(&req)
+
+	// Валидация входных данных
+	if validationErrors := ValidateSearchRequest(&req); len(validationErrors) > 0 {
+		reqLogger.Error("validation failed", validationErrors)
+		appErr := &AppError{
+			Code:    "VALIDATION_FAILED",
+			Message: "Request validation failed",
+			Details: validationErrors.Error(),
+			Status:  http.StatusBadRequest,
+		}
+		ErrorResponse(w, appErr)
 		return
 	}
 
@@ -82,16 +143,21 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		req.Settings.Queries = cfg.DefaultQueryCount
 	}
 
-	log.Printf("rid=%s search_start prompt=%q settings={queries:%d content_mode:%t}", rid, truncateStr(req.Prompt, 200), req.Settings.Queries, req.Settings.ContentMode)
+	reqLogger.Info("search_start",
+		"prompt", truncateStr(req.Prompt, 200),
+		"queries", req.Settings.Queries,
+		"content_mode", req.Settings.ContentMode,
+		"engines", req.Settings.Engines,
+	)
 
 	// Step 1: Generate queries via OpenRouter
-	queries, err := generateQueriesWithOpenRouter(req.Prompt, req.Settings.Queries, cfg.OpenRouterAPIKey)
+	queries, err := generateQueriesWithOpenRouter(ctx, req.Prompt, req.Settings.Queries, cfg.OpenRouterAPIKey)
 	if err != nil {
-		log.Printf("rid=%s queries_error err=%v", rid, err)
-		http.Error(w, "failed to generate queries: "+err.Error(), http.StatusInternalServerError)
+		reqLogger.Error("failed to generate queries", err)
+		ErrorResponse(w, WrapError(ErrQueryGeneration, err))
 		return
 	}
-	log.Printf("rid=%s queries_ok count=%d sample=%v", rid, len(queries), sampleStrings(queries, 3))
+	reqLogger.Info("queries_generated", "count", len(queries), "sample", sampleStrings(queries, 3))
 
 	// Step 2: Execute Searx searches concurrently
 	var (
@@ -100,12 +166,18 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		results []SearchResult
 	)
 
+	// Ограничиваем количество одновременных поисковых запросов
+	eg.SetLimit(5)
+
 	for _, q := range queries {
 		q := q // capture loop var
 		eg.Go(func() error {
-			res, err := searchSearx(cfg.SearxURL, q, req.Settings.Engines)
+			queryCtx, queryCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer queryCancel()
+
+			res, err := searchSearx(queryCtx, cfg.SearxURL, q, req.Settings.Engines)
 			if err != nil {
-				log.Printf("rid=%s searx_error query=%q err=%v", rid, q, err)
+				reqLogger.Error("searx search failed", err, "query", q)
 				return err
 			}
 			mu.Lock()
@@ -116,14 +188,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 	}
 
 	if err := eg.Wait(); err != nil {
-		log.Printf("rid=%s searx_group_error err=%v", rid, err)
-		http.Error(w, "search error: "+err.Error(), http.StatusInternalServerError)
+		reqLogger.Error("searx search group failed", err)
+		ErrorResponse(w, WrapError(ErrSearchFailed, err))
 		return
 	}
 
 	// deduplicate & rank
 	ranked := deduplicateAndRank(results)
-	log.Printf("rid=%s rank_done in_count=%d out_count=%d", rid, len(results), len(ranked))
+	reqLogger.Info("deduplication_completed", "input_count", len(results), "output_count", len(ranked))
 
 	// If content mode requested, fetch page content and evaluate relevance for each item individually
 	if req.Settings.ContentMode {
@@ -138,21 +210,25 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		resultsCh := make(chan contentEval, len(ranked))
 
 		var eg2 errgroup.Group
+		// Ограничиваем количество одновременных запросов контента
+		eg2.SetLimit(3)
+
 		for i := range ranked {
 			i := i
 			eg2.Go(func() error {
-				ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-				defer cancel()
-				content, err := fetchPageContent(ctx, ranked[i].URL)
+				contentCtx, contentCancel := context.WithTimeout(ctx, 20*time.Second)
+				defer contentCancel()
+
+				content, err := fetchPageContent(contentCtx, ranked[i].URL)
 				if err != nil {
-					log.Printf("rid=%s content_fetch_error url=%q err=%v", rid, ranked[i].URL, err)
+					reqLogger.Error("content fetch failed", err, "url", ranked[i].URL)
 					resultsCh <- contentEval{idx: i, fetchFailed: true, err: err}
 					return nil
 				}
 				// Evaluate relevance per-item to avoid huge prompts
-				relevant, relErr := isContentRelevantToPrompt(req.Prompt, ranked[i].Title, ranked[i].URL, content, cfg.OpenRouterAPIKey)
+				relevant, relErr := isContentRelevantToPrompt(contentCtx, req.Prompt, ranked[i].Title, ranked[i].URL, content, cfg.OpenRouterAPIKey)
 				if relErr != nil {
-					log.Printf("rid=%s content_relevance_error url=%q err=%v", rid, ranked[i].URL, relErr)
+					reqLogger.Error("content relevance evaluation failed", relErr, "url", ranked[i].URL)
 				}
 				resultsCh <- contentEval{idx: i, content: content, keep: relErr == nil && relevant, err: relErr}
 				return nil
@@ -187,16 +263,13 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		}
 		ranked = filtered
 	} else {
-		// Regular mode: optionally apply AI relevance filtering on snippets produced by Searx
-		if req.Settings.AIFilter {
-			log.Printf("rid=%s ai_filter_start items=%d", rid, len(ranked))
-			filtered, err := filterByAIRelevance(req.Prompt, ranked, cfg.OpenRouterAPIKey)
-			if err == nil {
-				ranked = filtered
-				log.Printf("rid=%s ai_filter_ok out_items=%d", rid, len(ranked))
-			} else {
-				log.Printf("rid=%s ai_filter_error err=%v", rid, err)
-			}
+		reqLogger.Info("ai_filter_start", "items", len(ranked))
+		filtered, err := filterByAIRelevance(ctx, req.Prompt, ranked, cfg.OpenRouterAPIKey)
+		if err == nil {
+			ranked = filtered
+			reqLogger.Info("ai_filter_completed", "output_items", len(ranked))
+		} else {
+			reqLogger.Error("ai_filter_failed", err)
 		}
 	}
 
@@ -206,8 +279,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-	log.Printf("rid=%s search_done duration_ms=%d results=%d", rid, time.Since(startedAt).Milliseconds(), len(ranked))
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		reqLogger.Error("failed to encode response", err)
+		ErrorResponse(w, &AppError{
+			Code:    "RESPONSE_ENCODING_FAILED",
+			Message: "Failed to encode response",
+			Status:  http.StatusInternalServerError,
+		})
+		return
+	}
+
+	reqLogger.WithDuration(startedAt).Info("search_completed", "results", len(ranked))
 }
 
 func truncateStr(s string, max int) string {

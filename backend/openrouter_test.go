@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func TestGenerateQueriesWithOpenRouter(t *testing.T) {
 	openRouterEndpoint = ts.URL
 	defer func() { openRouterEndpoint = old }()
 
-	queries, err := generateQueriesWithOpenRouter("some prompt", 3, "fake-key")
+	queries, err := generateQueriesWithOpenRouter(context.Background(), "some prompt", 3, "fake-key")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

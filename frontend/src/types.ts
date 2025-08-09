@@ -10,3 +10,15 @@ export interface SearchRequestSettings {
   content_mode: boolean
   engines?: string[]
 }
+
+export interface AppError {
+  code: string
+  message: string
+  details?: string
+}
+
+export interface ErrorResponse {
+  error: AppError
+}
+
+export type LoadingState = 'idle' | 'loading' | 'success' | 'error'

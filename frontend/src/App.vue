@@ -1,19 +1,167 @@
 <template>
-  <div class="min-h-screen flex flex-col items-center p-4 max-w-screen-md mx-auto">
-    <h1 class="text-3xl font-bold mb-4 text-center">AI-powered Search</h1>
-    <SearchForm />
-    <div class="mt-6 w-full">
-      <p v-if="store.loading" class="text-gray-500 text-center">Loading…</p>
-      <p v-else-if="store.error" class="text-red-600 text-center">{{ store.error }}</p>
-      <ResultList v-else :items="store.results" />
-    </div>
+  <div class="min-h-screen bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between items-center py-4">
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+              <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
+              </svg>
+            </div>
+            <div>
+              <h1 class="text-xl font-bold text-gray-900">AI Search Aggregator</h1>
+              <p class="text-sm text-gray-500 hidden sm:block">Умный поиск с множественными запросами</p>
+            </div>
+          </div>
+          
+          <!-- Status indicator -->
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 text-sm">
+              <div 
+                class="w-2 h-2 rounded-full"
+                :class="{
+                  'bg-green-500': store.loadingState === 'success',
+                  'bg-yellow-500 animate-pulse': store.loadingState === 'loading',
+                  'bg-red-500': store.loadingState === 'error',
+                  'bg-gray-400': store.loadingState === 'idle'
+                }"
+              ></div>
+              <span class="text-gray-600 hidden sm:inline">
+                {{ statusText }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div class="flex flex-col lg:flex-row gap-8">
+        <!-- Search sidebar -->
+        <aside class="lg:w-96 flex-shrink-0">
+          <div class="sticky top-24">
+            <SearchForm />
+            
+            <!-- Quick tips -->
+            <div v-if="store.loadingState === 'idle'" class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h3 class="font-medium text-blue-900 mb-2">💡 Советы для поиска:</h3>
+              <ul class="text-sm text-blue-800 space-y-1">
+                <li>• Формулируйте вопросы конкретно</li>
+                <li>• Используйте ключевые слова</li>
+                <li>• Включите анализ контента для лучших результатов</li>
+                <li>• Используйте Ctrl+Enter для быстрого поиска</li>
+              </ul>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Results area -->
+        <div class="flex-1 min-w-0">
+          <!-- Loading state -->
+          <div v-if="store.isLoading" class="text-center py-12">
+            <div class="inline-flex items-center gap-3 px-6 py-3 bg-white rounded-lg shadow-sm border">
+              <svg class="animate-spin w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <div class="text-left">
+                <p class="font-medium text-gray-900">Выполняется поиск...</p>
+                <p class="text-sm text-gray-600">Генерируем запросы и собираем результаты</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Results -->
+          <ResultList 
+            v-else
+            :items="store.results" 
+            :queries="store.queries"
+            :show-placeholder="store.loadingState === 'idle'"
+          />
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-gray-200 mt-16">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div class="flex justify-between items-center text-sm text-gray-600">
+          <p>&copy; 2025 AI Search Aggregator. Создано с использованием Vue 3 и Go.</p>
+          <div class="flex gap-4">
+            <a href="#" class="hover:text-gray-900 transition-colors">О проекте</a>
+            <a href="#" class="hover:text-gray-900 transition-colors">Помощь</a>
+          </div>
+        </div>
+      </div>
+    </footer>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import SearchForm from './components/SearchForm.vue'
 import ResultList from './components/ResultList.vue'
 import { useSearchStore } from './stores/search'
 
 const store = useSearchStore()
+
+const statusText = computed(() => {
+  switch (store.loadingState) {
+    case 'loading': return 'Поиск...'
+    case 'success': return `${store.results.length} результатов`
+    case 'error': return 'Ошибка'
+    default: return 'Готов к поиску'
+  }
+})
 </script>
+
+<style>
+/* Убираем стандартные стили для лучшего контроля */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Улучшенные стили для focus */
+button:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+}
+
+/* Анимации */
+@media (prefers-reduced-motion: no-preference) {
+  .transition-all {
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .transition-colors {
+    transition: color 0.2s ease-in-out, background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+  }
+  
+  .transition-opacity {
+    transition: opacity 0.2s ease-in-out;
+  }
+  
+  .transition-shadow {
+    transition: box-shadow 0.2s ease-in-out;
+  }
+}
+
+/* Скрытие скроллбара но с сохранением прокрутки */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+</style>

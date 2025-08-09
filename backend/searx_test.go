@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +27,7 @@ func TestSearchSearx(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	results, err := searchSearx(ts.URL, "test")
+	results, err := searchSearx(context.Background(), ts.URL, "test", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
