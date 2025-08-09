@@ -22,9 +22,6 @@
               <input type="checkbox" :value="eng" v-model="selectedEngines" />
               <span>{{ eng }}</span>
             </label>
-            <div class="flex justify-end mt-2">
-              <button type="button" class="text-xs px-2 py-1 border rounded" @click="applyEngines">Apply</button>
-            </div>
           </div>
         </div>
         <button :disabled="store.loading" class="ml-auto px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50">
@@ -36,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import type { SearchResult, SearchRequestSettings } from '../types'
 
 import { useSearchStore } from '../stores/search'
@@ -59,10 +56,9 @@ function toggleEngines() {
   openEngines.value = !openEngines.value
 }
 
-function applyEngines() {
-  settings.value.engines = [...selectedEngines.value]
-  openEngines.value = false
-}
+watch(selectedEngines, (val) => {
+  settings.value.engines = [...val]
+})
 
 function handleDocumentClick(e: MouseEvent) {
   if (!openEngines.value) return
