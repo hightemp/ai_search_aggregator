@@ -9,10 +9,6 @@
           <input type="checkbox" v-model="settings.content_mode" />
           Full content
         </label>
-        <label class="flex items-center gap-1 text-sm">
-          <input type="checkbox" v-model="settings.ai_filter" />
-          AI relevance filter
-        </label>
         <div class="relative" ref="enginesMenuRef">
           <button type="button" class="border rounded px-2 py-1 text-sm" @click="toggleEngines">
             Engines
@@ -39,7 +35,7 @@ import type { SearchResult, SearchRequestSettings } from '../types'
 import { useSearchStore } from '../stores/search'
 
 const prompt = ref('')
-const settings = ref<SearchRequestSettings>({ queries: 5, content_mode: false, ai_filter: false, engines: [] })
+const settings = ref<SearchRequestSettings>({ queries: 5, content_mode: false, engines: [] })
 const store = useSearchStore()
 
 const openEngines = ref(false)

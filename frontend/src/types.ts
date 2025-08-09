@@ -8,6 +8,5 @@ export interface SearchResult {
 export interface SearchRequestSettings {
   queries: number
   content_mode: boolean
-  ai_filter: boolean
   engines?: string[]
 }

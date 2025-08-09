@@ -22,7 +22,6 @@ type SearchRequest struct {
 type Settings struct {
 	Queries     int      `json:"queries"`
 	ContentMode bool     `json:"content_mode"`
-	AIFilter    bool     `json:"ai_filter"`
 	Engines     []string `json:"engines"`
 }
 
@@ -83,7 +82,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		req.Settings.Queries = cfg.DefaultQueryCount
 	}
 
-	log.Printf("rid=%s search_start prompt=%q settings={queries:%d content_mode:%t ai_filter:%t}", rid, truncateStr(req.Prompt, 200), req.Settings.Queries, req.Settings.ContentMode, req.Settings.AIFilter)
+	log.Printf("rid=%s search_start prompt=%q settings={queries:%d content_mode:%t}", rid, truncateStr(req.Prompt, 200), req.Settings.Queries, req.Settings.ContentMode)
 
 	// Step 1: Generate queries via OpenRouter
 	queries, err := generateQueriesWithOpenRouter(req.Prompt, req.Settings.Queries, cfg.OpenRouterAPIKey)
