@@ -1,5 +1,5 @@
 <template>
-  <div v-if="store.isLoading || store.searchStatus" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+  <div v-if="store.isLoading" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
     <div class="flex items-center justify-between">
       <!-- Статус поиска -->
       <div class="flex items-center gap-3">
@@ -42,18 +42,7 @@
       </div>
     </div>
 
-    <!-- WebSocket статус -->
-    <div class="mt-3 flex items-center gap-2 text-xs">
-      <div class="flex items-center gap-1">
-        <div 
-          class="w-2 h-2 rounded-full"
-          :class="store.isWebSocketConnected ? 'bg-green-500' : 'bg-red-500'"
-        ></div>
-        <span class="text-gray-600">
-          WebSocket {{ store.isWebSocketConnected ? 'подключен' : 'отключен' }}
-        </span>
-      </div>
-    </div>
+
   </div>
 </template>
 

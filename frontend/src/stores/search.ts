@@ -104,10 +104,12 @@ export const useSearchStore = defineStore('search', {
             this.searchElapsed = result.elapsed
             this.loadingState = 'success'
             this.retryCount = 0
+            this.searchStatus = null // Очищаем статус после завершения
           },
           onError: (error) => {
             this.error = error
             this.loadingState = 'error'
+            this.searchStatus = null // Очищаем статус при ошибке
           },
           onDisconnect: () => {
             // При отключении во время поиска считаем это ошибкой
@@ -118,6 +120,7 @@ export const useSearchStore = defineStore('search', {
                 details: 'Попробуйте повторить поиск'
               }
               this.loadingState = 'error'
+              this.searchStatus = null // Очищаем статус при отключении
             }
           }
         })
