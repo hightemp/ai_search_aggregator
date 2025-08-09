@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -21,6 +22,7 @@ type SearchRequest struct {
 type Settings struct {
 	Queries     int  `json:"queries"`
 	ContentMode bool `json:"content_mode"`
+	AIFilter    bool `json:"ai_filter"`
 }
 
 type SearchResult struct {
@@ -67,8 +69,11 @@ func main() {
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
+	startedAt := time.Now()
+	rid := fmt.Sprintf("%d", time.Now().UnixNano())
 	var req SearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("rid=%s decode_error err=%v", rid, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -77,12 +82,16 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		req.Settings.Queries = cfg.DefaultQueryCount
 	}
 
+	log.Printf("rid=%s search_start prompt=%q settings={queries:%d content_mode:%t ai_filter:%t}", rid, truncateStr(req.Prompt, 200), req.Settings.Queries, req.Settings.ContentMode, req.Settings.AIFilter)
+
 	// Step 1: Generate queries via OpenRouter
 	queries, err := generateQueriesWithOpenRouter(req.Prompt, req.Settings.Queries, cfg.OpenRouterAPIKey)
 	if err != nil {
+		log.Printf("rid=%s queries_error err=%v", rid, err)
 		http.Error(w, "failed to generate queries: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("rid=%s queries_ok count=%d sample=%v", rid, len(queries), sampleStrings(queries, 3))
 
 	// Step 2: Execute Searx searches concurrently
 	var (
@@ -96,6 +105,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		eg.Go(func() error {
 			res, err := searchSearx(cfg.SearxURL, q)
 			if err != nil {
+				log.Printf("rid=%s searx_error query=%q err=%v", rid, q, err)
 				return err
 			}
 			mu.Lock()
@@ -106,12 +116,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 	}
 
 	if err := eg.Wait(); err != nil {
+		log.Printf("rid=%s searx_group_error err=%v", rid, err)
 		http.Error(w, "search error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// deduplicate & rank
 	ranked := deduplicateAndRank(results)
+	log.Printf("rid=%s rank_done in_count=%d out_count=%d", rid, len(results), len(ranked))
 
 	// If content mode requested, fetch page content concurrently and replace snippet
 	if req.Settings.ContentMode {
@@ -124,11 +136,25 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 				content, err := fetchPageContent(ctx, ranked[i].URL)
 				if err == nil && content != "" {
 					ranked[i].Snippet = content
+				} else if err != nil {
+					log.Printf("rid=%s content_fetch_error url=%q err=%v", rid, ranked[i].URL, err)
 				}
 				return nil
 			})
 		}
 		_ = eg2.Wait()
+	} else {
+		// Regular mode: optionally apply AI relevance filtering on snippets produced by Searx
+		if req.Settings.AIFilter {
+			log.Printf("rid=%s ai_filter_start items=%d", rid, len(ranked))
+			filtered, err := filterByAIRelevance(req.Prompt, ranked, cfg.OpenRouterAPIKey)
+			if err == nil {
+				ranked = filtered
+				log.Printf("rid=%s ai_filter_ok out_items=%d", rid, len(ranked))
+			} else {
+				log.Printf("rid=%s ai_filter_error err=%v", rid, err)
+			}
+		}
 	}
 
 	resp := SearchResponse{
@@ -138,4 +164,19 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+	log.Printf("rid=%s search_done duration_ms=%d results=%d", rid, time.Since(startedAt).Milliseconds(), len(ranked))
+}
+
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+func sampleStrings(in []string, n int) []string {
+	if len(in) <= n {
+		return in
+	}
+	return in[:n]
 }

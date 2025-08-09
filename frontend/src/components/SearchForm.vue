@@ -9,6 +9,10 @@
           <input type="checkbox" v-model="settings.content_mode" />
           Full content
         </label>
+        <label class="flex items-center gap-1 text-sm">
+          <input type="checkbox" v-model="settings.ai_filter" />
+          AI relevance filter
+        </label>
         <button :disabled="store.loading" class="ml-auto px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50">
           {{ store.loading ? 'Searching…' : 'Search' }}
         </button>
@@ -25,7 +29,7 @@ import type { SearchResult, SearchRequestSettings } from '../types'
 import { useSearchStore } from '../stores/search'
 
 const prompt = ref('')
-const settings = ref<SearchRequestSettings>({ queries: 5, content_mode: false })
+const settings = ref<SearchRequestSettings>({ queries: 5, content_mode: false, ai_filter: false })
 const store = useSearchStore()
 
 async function submit() {

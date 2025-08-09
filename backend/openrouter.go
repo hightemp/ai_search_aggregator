@@ -87,3 +87,115 @@ func generateQueriesWithOpenRouter(prompt string, n int, apiKey string) ([]strin
 	}
 	return queries, nil
 }
+
+// filterByAIRelevance uses the LLM to classify which search results are relevant to the user's prompt.
+// It returns only those predicted as relevant while preserving order.
+func filterByAIRelevance(prompt string, results []SearchResult, apiKey string) ([]SearchResult, error) {
+	if apiKey == "" {
+		return nil, errors.New("OPENROUTER_API_KEY not set")
+	}
+	if len(results) == 0 {
+		return results, nil
+	}
+
+	// Limit evaluated items to bound token usage
+	const maxItems = 30
+	end := len(results)
+	if end > maxItems {
+		end = maxItems
+	}
+	subset := results[:end]
+
+	systemPrompt := "You are a strict relevance judge. For each item decide if it is relevant to the user's query based on title and snippet. Output ONLY a JSON array of 0 or 1 for each item in order."
+
+	var sb strings.Builder
+	sb.WriteString("User query:\n")
+	sb.WriteString(prompt)
+	sb.WriteString("\n\nItems to judge (keep order):\n")
+	for i, it := range subset {
+		sb.WriteString(fmt.Sprintf("%d) Title: %s\nURL: %s\nSnippet: %s\n\n", i+1, strings.TrimSpace(it.Title), strings.TrimSpace(it.URL), truncateForLLM(it.Snippet, 700)))
+	}
+	userPrompt := sb.String()
+
+	reqBody := openRouterRequest{
+		Model: "openai/gpt-4o-mini",
+		Messages: []openMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		MaxTokens: 64,
+	}
+
+	payload, _ := json.Marshal(reqBody)
+	httpReq, _ := http.NewRequest("POST", openRouterEndpoint, bytes.NewReader(payload))
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Title", "AI Relevance Filter")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var orResp openRouterResponse
+	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
+		return nil, err
+	}
+	if len(orResp.Choices) == 0 {
+		return nil, errors.New("no choices returned from openrouter")
+	}
+
+	content := strings.TrimSpace(orResp.Choices[0].Message.Content)
+	start := strings.Index(content, "[")
+	endIdx := strings.LastIndex(content, "]")
+	if start == -1 || endIdx == -1 || endIdx <= start {
+		return nil, fmt.Errorf("unexpected classifier response: %q", content)
+	}
+	jsonPart := content[start : endIdx+1]
+
+	var ints []int
+	if err := json.Unmarshal([]byte(jsonPart), &ints); err != nil {
+		var bools []bool
+		if err2 := json.Unmarshal([]byte(jsonPart), &bools); err2 != nil {
+			return nil, fmt.Errorf("failed to parse classifier JSON: %v", err)
+		}
+		for _, v := range bools {
+			if v {
+				ints = append(ints, 1)
+			} else {
+				ints = append(ints, 0)
+			}
+		}
+	}
+
+	if len(ints) < len(subset) {
+		pad := make([]int, len(subset)-len(ints))
+		ints = append(ints, pad...)
+	}
+
+	filtered := make([]SearchResult, 0, len(results))
+	for i, it := range subset {
+		if i < len(ints) && ints[i] == 1 {
+			filtered = append(filtered, it)
+		}
+	}
+	if len(results) > len(subset) {
+		filtered = append(filtered, results[len(subset):]...)
+	}
+	return filtered, nil
+}
+
+func truncateForLLM(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
