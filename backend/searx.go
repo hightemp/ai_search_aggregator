@@ -20,8 +20,13 @@ type searxResponse struct {
 	Results []searxResultItem `json:"results"`
 }
 
-func searchSearx(searxBase, query string) ([]SearchResult, error) {
-	endpoint := fmt.Sprintf("%s/search?q=%s&format=json", strings.TrimRight(searxBase, "/"), url.QueryEscape(query))
+func searchSearx(searxBase, query string, engines []string) ([]SearchResult, error) {
+	base := strings.TrimRight(searxBase, "/")
+	endpoint := fmt.Sprintf("%s/search?q=%s&format=json", base, url.QueryEscape(query))
+	if len(engines) > 0 {
+		// SearxNG accepts engines as comma-separated list
+		endpoint += "&engines=" + url.QueryEscape(strings.Join(engines, ","))
+	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Get(endpoint)
 	if err != nil {

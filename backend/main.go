@@ -20,9 +20,10 @@ type SearchRequest struct {
 }
 
 type Settings struct {
-	Queries     int  `json:"queries"`
-	ContentMode bool `json:"content_mode"`
-	AIFilter    bool `json:"ai_filter"`
+	Queries     int      `json:"queries"`
+	ContentMode bool     `json:"content_mode"`
+	AIFilter    bool     `json:"ai_filter"`
+	Engines     []string `json:"engines"`
 }
 
 type SearchResult struct {
@@ -103,7 +104,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 	for _, q := range queries {
 		q := q // capture loop var
 		eg.Go(func() error {
-			res, err := searchSearx(cfg.SearxURL, q)
+			res, err := searchSearx(cfg.SearxURL, q, req.Settings.Engines)
 			if err != nil {
 				log.Printf("rid=%s searx_error query=%q err=%v", rid, q, err)
 				return err
@@ -128,10 +129,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 	// If content mode requested, fetch page content and evaluate relevance for each item individually
 	if req.Settings.ContentMode {
 		type contentEval struct {
-			idx     int
-			content string
-			keep    bool
-			err     error
+			idx         int
+			content     string
+			keep        bool
+			fetchFailed bool
+			err         error
 		}
 
 		resultsCh := make(chan contentEval, len(ranked))
@@ -145,7 +147,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 				content, err := fetchPageContent(ctx, ranked[i].URL)
 				if err != nil {
 					log.Printf("rid=%s content_fetch_error url=%q err=%v", rid, ranked[i].URL, err)
-					resultsCh <- contentEval{idx: i, err: err}
+					resultsCh <- contentEval{idx: i, fetchFailed: true, err: err}
 					return nil
 				}
 				// Evaluate relevance per-item to avoid huge prompts
@@ -160,15 +162,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 		_ = eg2.Wait()
 		close(resultsCh)
 
-		// Build filtered list: keep items that were judged relevant; if fetch failed, keep original
+		// Build filtered list: keep items that were judged relevant; if fetch failed, drop item
 		keepMap := make(map[int]bool, len(ranked))
 		for r := range resultsCh {
-			if r.err != nil {
-				// fetch or relevance error -> keep original item to degrade gracefully
+			if r.fetchFailed {
+				keepMap[r.idx] = false
+			} else if r.err != nil {
+				// relevance error -> keep original item (graceful degrade)
 				keepMap[r.idx] = true
-				continue
+			} else {
+				keepMap[r.idx] = r.keep
 			}
-			keepMap[r.idx] = r.keep
 		}
 
 		filtered := make([]SearchResult, 0, len(ranked))
