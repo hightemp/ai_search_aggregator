@@ -199,3 +199,64 @@ func truncateForLLM(s string, max int) string {
 	}
 	return s[:max] + "…"
 }
+
+// isContentRelevantToPrompt judges a single page content for relevance to the user's query.
+// Returns true if relevant, false otherwise.
+func isContentRelevantToPrompt(prompt, title, url, content, apiKey string) (bool, error) {
+	if apiKey == "" {
+		return false, errors.New("OPENROUTER_API_KEY not set")
+	}
+	systemPrompt := "You are a strict binary relevance judge. Answer with a single character: 1 if the page content is relevant to the user's query, 0 if not. No explanation."
+
+	userPrompt := strings.Builder{}
+	userPrompt.WriteString("User query:\n")
+	userPrompt.WriteString(prompt)
+	userPrompt.WriteString("\n\nPage title:\n")
+	userPrompt.WriteString(strings.TrimSpace(title))
+	userPrompt.WriteString("\nURL:\n")
+	userPrompt.WriteString(strings.TrimSpace(url))
+	userPrompt.WriteString("\n\nPage content (may be truncated):\n")
+	userPrompt.WriteString(truncateForLLM(content, 3500))
+
+	reqBody := openRouterRequest{
+		Model: "openai/gpt-4o-mini",
+		Messages: []openMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt.String()},
+		},
+		MaxTokens: 4,
+	}
+
+	payload, _ := json.Marshal(reqBody)
+	httpReq, _ := http.NewRequest("POST", openRouterEndpoint, bytes.NewReader(payload))
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Title", "AI Single Content Relevance")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var orResp openRouterResponse
+	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
+		return false, err
+	}
+	if len(orResp.Choices) == 0 {
+		return false, errors.New("no choices returned from openrouter")
+	}
+	ans := strings.TrimSpace(orResp.Choices[0].Message.Content)
+	// Normalize
+	ansLower := strings.ToLower(ans)
+	if strings.HasPrefix(ans, "1") || ans == "1" || ansLower == "true" || strings.HasPrefix(ansLower, "yes") {
+		return true, nil
+	}
+	return false, nil
+}

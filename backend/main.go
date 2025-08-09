@@ -125,8 +125,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 	ranked := deduplicateAndRank(results)
 	log.Printf("rid=%s rank_done in_count=%d out_count=%d", rid, len(results), len(ranked))
 
-	// If content mode requested, fetch page content concurrently and replace snippet
+	// If content mode requested, fetch page content and evaluate relevance for each item individually
 	if req.Settings.ContentMode {
+		type contentEval struct {
+			idx     int
+			content string
+			keep    bool
+			err     error
+		}
+
+		resultsCh := make(chan contentEval, len(ranked))
+
 		var eg2 errgroup.Group
 		for i := range ranked {
 			i := i
@@ -134,15 +143,46 @@ func handleSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig) {
 				ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 				defer cancel()
 				content, err := fetchPageContent(ctx, ranked[i].URL)
-				if err == nil && content != "" {
-					ranked[i].Snippet = content
-				} else if err != nil {
+				if err != nil {
 					log.Printf("rid=%s content_fetch_error url=%q err=%v", rid, ranked[i].URL, err)
+					resultsCh <- contentEval{idx: i, err: err}
+					return nil
 				}
+				// Evaluate relevance per-item to avoid huge prompts
+				relevant, relErr := isContentRelevantToPrompt(req.Prompt, ranked[i].Title, ranked[i].URL, content, cfg.OpenRouterAPIKey)
+				if relErr != nil {
+					log.Printf("rid=%s content_relevance_error url=%q err=%v", rid, ranked[i].URL, relErr)
+				}
+				resultsCh <- contentEval{idx: i, content: content, keep: relErr == nil && relevant, err: relErr}
 				return nil
 			})
 		}
 		_ = eg2.Wait()
+		close(resultsCh)
+
+		// Build filtered list: keep items that were judged relevant; if fetch failed, keep original
+		keepMap := make(map[int]bool, len(ranked))
+		for r := range resultsCh {
+			if r.err != nil {
+				// fetch or relevance error -> keep original item to degrade gracefully
+				keepMap[r.idx] = true
+				continue
+			}
+			keepMap[r.idx] = r.keep
+		}
+
+		filtered := make([]SearchResult, 0, len(ranked))
+		for i, it := range ranked {
+			if keep, ok := keepMap[i]; ok {
+				if keep {
+					filtered = append(filtered, it)
+				}
+			} else {
+				// No evaluation result (should not happen) -> keep
+				filtered = append(filtered, it)
+			}
+		}
+		ranked = filtered
 	} else {
 		// Regular mode: optionally apply AI relevance filtering on snippets produced by Searx
 		if req.Settings.AIFilter {

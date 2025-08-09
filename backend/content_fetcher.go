@@ -2,34 +2,30 @@ package main
 
 import (
 	"context"
-	"io"
-	"net/http"
 	"strings"
 	"time"
+
+	readability "github.com/go-shiori/go-readability"
 )
 
 func fetchPageContent(ctx context.Context, targetURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	// Derive timeout from context if available
+	timeout := 20 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		d := time.Until(deadline)
+		if d > 0 {
+			timeout = d
+		}
+	}
+
+	article, err := readability.FromURL(targetURL, timeout)
 	if err != nil {
 		return "", err
 	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
+	text := strings.TrimSpace(article.TextContent)
+	if text == "" {
+		text = strings.TrimSpace(article.Excerpt)
 	}
-	defer resp.Body.Close()
-
-	// Limit to 64KB for memory safety
-	limited := io.LimitReader(resp.Body, 64*1024)
-	data, err := io.ReadAll(limited)
-	if err != nil {
-		return "", err
-	}
-
-	text := strings.TrimSpace(string(data))
-	// Collapse whitespace
 	text = strings.Join(strings.Fields(text), " ")
 	return text, nil
 }
