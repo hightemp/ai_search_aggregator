@@ -8,11 +8,11 @@ See `deploy/env.example`
 
 ## Tech Stack
 
-- **Backend**: Go 1.23, Chi router, structured logging
-- **Frontend**: Vue 3, TypeScript, Tailwind CSS, Pinia
+- **Backend**: Go 1.23, Chi router, Gorilla WebSocket, structured logging
+- **Frontend**: Vue 3, TypeScript, Tailwind CSS, Pinia, WebSocket API
 - **Search**: SearxNG (self-hosted)
-- **AI**: OpenRouter API (ChatGPT-4o)
-- **Deploy**: Docker Compose
+- **AI**: OpenRouter API
+- **Deploy**: Docker Compose with WebSocket-enabled Nginx
 
 ## License
 

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import axios, { AxiosError } from 'axios'
-import type { SearchResult, SearchRequestSettings, AppError, ErrorResponse, LoadingState } from '../types'
+import type { SearchResult, SearchRequestSettings, AppError, LoadingState, WSSearchStatus } from '../types'
+import { WebSocketSearchClient } from '../services/websocket'
 
 interface State {
   results: SearchResult[]
@@ -9,6 +9,11 @@ interface State {
   error: AppError | null
   retryCount: number
   lastSearchParams: { prompt: string; settings: SearchRequestSettings } | null
+  // WebSocket и таймер состояние
+  searchStartTime: number | null
+  searchElapsed: number
+  searchStatus: WSSearchStatus | null
+  wsClient: WebSocketSearchClient | null
 }
 
 const MAX_RETRY_ATTEMPTS = 3
@@ -22,6 +27,11 @@ export const useSearchStore = defineStore('search', {
     error: null,
     retryCount: 0,
     lastSearchParams: null,
+    // WebSocket и таймер состояние
+    searchStartTime: null,
+    searchElapsed: 0,
+    searchStatus: null,
+    wsClient: null,
   }),
   getters: {
     isLoading: (state) => state.loadingState === 'loading',
@@ -39,33 +49,82 @@ export const useSearchStore = defineStore('search', {
         'CONTENT_FETCH_FAILED': 'Не удалось загрузить содержимое страниц.',
         'RESPONSE_ENCODING_FAILED': 'Ошибка обработки ответа сервера.',
         'INTERNAL_ERROR': 'Внутренняя ошибка сервера. Попробуйте позже.',
+        'CONNECTION_FAILED': 'Ошибка подключения к серверу.',
+        'CONNECTION_LOST': 'Соединение потеряно во время поиска.',
+        'TIMEOUT': 'Превышено время ожидания ответа.',
+        'NETWORK_ERROR': 'Ошибка сети. Проверьте подключение к интернету.',
       }
       
       return errorMap[state.error.code] || `Неизвестная ошибка: ${state.error.message}`
     },
+    // Новые getters для WebSocket и таймера
+    formattedElapsed: (state): string => {
+      const elapsed = state.searchElapsed
+      if (elapsed < 1000) return `${elapsed}мс`
+      if (elapsed < 60000) return `${(elapsed / 1000).toFixed(1)}с`
+      return `${(elapsed / 60000).toFixed(1)}мин`
+    },
+    currentElapsed(state): number {
+      if (!state.searchStartTime) return state.searchElapsed
+      return Date.now() - state.searchStartTime
+    },
+    isWebSocketConnected: (state) => state.wsClient?.isConnected ?? false,
   },
   actions: {
     async search(prompt: string, settings: SearchRequestSettings) {
       this.loadingState = 'loading'
       this.error = null
       this.lastSearchParams = { prompt, settings }
+      this.searchStartTime = Date.now()
+      this.searchElapsed = 0
+      this.searchStatus = null
       
       try {
-        const response = await axios.post('/api/search', { prompt, settings }, {
-          timeout: 120000, // 2 минуты
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        })
-        
-        this.results = response.data.results as SearchResult[]
-        this.queries = response.data.queries as string[]
-        this.loadingState = 'success'
-        this.retryCount = 0
-        
+        await this.connectAndSearch(prompt, settings)
       } catch (e) {
         this.handleSearchError(e)
       }
+    },
+
+    async connectAndSearch(prompt: string, settings: SearchRequestSettings) {
+      // Инициализируем WebSocket клиент если его нет
+      if (!this.wsClient) {
+        this.wsClient = new WebSocketSearchClient()
+      }
+
+      // Подключаемся если не подключены
+      if (!this.wsClient.isConnected) {
+        await this.wsClient.connect({
+          onStatus: (status) => {
+            this.searchStatus = status
+          },
+          onResult: (result) => {
+            this.results = result.results
+            this.queries = result.queries
+            this.searchElapsed = result.elapsed
+            this.loadingState = 'success'
+            this.retryCount = 0
+          },
+          onError: (error) => {
+            this.error = error
+            this.loadingState = 'error'
+          },
+          onDisconnect: () => {
+            // При отключении во время поиска считаем это ошибкой
+            if (this.loadingState === 'loading') {
+              this.error = {
+                code: 'CONNECTION_LOST',
+                message: 'Соединение потеряно во время поиска',
+                details: 'Попробуйте повторить поиск'
+              }
+              this.loadingState = 'error'
+            }
+          }
+        })
+      }
+
+      // Запускаем поиск
+      this.wsClient.search(prompt, settings)
     },
 
     async retrySearch() {
@@ -93,39 +152,31 @@ export const useSearchStore = defineStore('search', {
       this.loadingState = 'idle'
       this.retryCount = 0
       this.lastSearchParams = null
+      this.searchStartTime = null
+      this.searchElapsed = 0
+      this.searchStatus = null
+    },
+
+    // WebSocket management
+    disconnectWebSocket() {
+      if (this.wsClient) {
+        this.wsClient.disconnect()
+        this.wsClient = null
+      }
+    },
+
+    updateSearchElapsed() {
+      if (this.searchStartTime) {
+        this.searchElapsed = Date.now() - this.searchStartTime
+      }
     },
 
     handleSearchError(e: any) {
       this.loadingState = 'error'
       
-      if (axios.isAxiosError(e)) {
-        const axiosError = e as AxiosError<ErrorResponse>
-        
-        if (axiosError.response?.data?.error) {
-          // Структурированная ошибка от API
-          this.error = axiosError.response.data.error
-        } else if (axiosError.code === 'ECONNABORTED') {
-          // Тайм-аут
-          this.error = {
-            code: 'TIMEOUT',
-            message: 'Превышено время ожидания ответа',
-            details: 'Попробуйте уменьшить количество запросов или отключить режим анализа контента',
-          }
-        } else if (axiosError.code === 'ERR_NETWORK') {
-          // Проблемы с сетью
-          this.error = {
-            code: 'NETWORK_ERROR',
-            message: 'Ошибка сети',
-            details: 'Проверьте подключение к интернету',
-          }
-        } else {
-          // Другие HTTP ошибки
-          this.error = {
-            code: 'HTTP_ERROR',
-            message: `Ошибка сервера (${axiosError.response?.status || 'неизвестный код'})`,
-            details: axiosError.message,
-          }
-        }
+      // Если ошибка уже в правильном формате (от WebSocket)
+      if (e && typeof e === 'object' && e.code && e.message) {
+        this.error = e as AppError
       } else {
         // Неизвестная ошибка
         this.error = {

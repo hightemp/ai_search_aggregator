@@ -9,8 +9,7 @@
   },
   "dependencies": {
     "vue": "^3.4.0",
-    "pinia": "^2.1.7",
-    "axios": "^1.6.2"
+    "pinia": "^2.1.7"
   },
   "devDependencies": {
     "typescript": "^5.2.2",
