@@ -23,7 +23,7 @@ type searxResponse struct {
 
 func searchSearx(ctx context.Context, searxBase, query string, engines []string) ([]SearchResult, error) {
 	base := strings.TrimRight(searxBase, "/")
-	endpoint := fmt.Sprintf("%s/search?q=%s&format=json", base, url.QueryEscape(query))
+	endpoint := fmt.Sprintf("%s/search?q=%s&format=json&language=en&locale=en-US", base, url.QueryEscape(query))
 	if len(engines) > 0 {
 		// SearxNG accepts engines as comma-separated list
 		endpoint += "&engines=" + url.QueryEscape(strings.Join(engines, ","))
