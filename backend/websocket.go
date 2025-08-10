@@ -95,7 +95,7 @@ type WSError struct {
 func handleWebSocketSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig, logger *Logger) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		logger.Error("failed to upgrade connection", err)
+		logger.Error("failed to upgrade connection", "error", err)
 		return
 	}
 	defer conn.Close()
@@ -228,14 +228,9 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 		sendSafeStatus(safeConn, "analyzing_content", 0, len(ranked), "Анализ содержимого страниц...")
 		ranked = analyzeContentWithProgress(ctx, safeConn, searchReq.Prompt, ranked, cfg, logger)
 	} else {
-		sendSafeStatus(safeConn, "ai_filtering", 0, 1, "ИИ-фильтрация результатов...")
-		filtered, err := filterByAIRelevance(ctx, searchReq.Prompt, ranked, cfg.OpenRouterAPIKey)
-		if err == nil {
-			ranked = filtered
-			logger.Info("ai filter completed", "output_items", len(ranked))
-		} else {
-			logger.Error("ai filter failed", "error", err)
-		}
+		sendSafeStatus(safeConn, "ai_filtering", 0, len(ranked), "ИИ-фильтрация результатов...")
+		ranked = filterByAIRelevanceWithProgress(ctx, safeConn, searchReq.Prompt, ranked, cfg, logger)
+		logger.Info("ai filter completed", "output_items", len(ranked))
 	}
 
 	elapsed := time.Since(startTime).Milliseconds()
@@ -318,6 +313,77 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 			filtered = append(filtered, result)
 		} else if !ok {
 			filtered = append(filtered, result) // No evaluation result
+		}
+	}
+
+	return filtered
+}
+
+func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocketConn, prompt string, results []SearchResult, cfg AppConfig, logger *Logger) []SearchResult {
+	type relevanceEval struct {
+		idx  int
+		keep bool
+		err  error
+	}
+
+	const maxConcurrency = 3
+	resultsCh := make(chan relevanceEval, len(results))
+	var eg errgroup.Group
+	eg.SetLimit(maxConcurrency)
+
+	completed := 0
+	mu := sync.Mutex{}
+
+	// Обрабатываем каждый результат по отдельности
+	for i := range results {
+		i := i
+		eg.Go(func() error {
+			relevanceCtx, relevanceCancel := context.WithTimeout(ctx, 30*time.Second)
+			defer relevanceCancel()
+
+			// Используем существующую функцию isContentRelevantToPrompt для оценки одного элемента
+			// Передаем заголовок и сниппет как "контент"
+			content := results[i].Title + "\n" + results[i].Snippet
+			relevant, err := isContentRelevantToPrompt(relevanceCtx, prompt, results[i].Title, results[i].URL, content, cfg.OpenRouterAPIKey)
+
+			if err != nil {
+				logger.Error("ai relevance evaluation failed", "error", err, "url", results[i].URL)
+				// При ошибке включаем результат (чтобы не потерять данные)
+				resultsCh <- relevanceEval{idx: i, keep: true, err: err}
+			} else {
+				resultsCh <- relevanceEval{idx: i, keep: relevant, err: nil}
+			}
+
+			mu.Lock()
+			completed++
+			currentCompleted := completed
+			mu.Unlock()
+
+			// Отправляем обновление прогресса
+			sendSafeStatus(safeConn, "ai_filtering", currentCompleted, len(results),
+				"Проанализировано результатов: %d/%d", currentCompleted, len(results))
+
+			return nil
+		})
+	}
+
+	_ = eg.Wait()
+	close(resultsCh)
+
+	// Собираем результаты оценки
+	keepMap := make(map[int]bool)
+	for eval := range resultsCh {
+		keepMap[eval.idx] = eval.keep
+	}
+
+	// Фильтруем результаты на основе оценок
+	filtered := make([]SearchResult, 0, len(results))
+	for i, result := range results {
+		if keep, ok := keepMap[i]; ok && keep {
+			filtered = append(filtered, result)
+		} else if !ok {
+			// Если нет оценки, включаем результат (для безопасности)
+			filtered = append(filtered, result)
 		}
 	}
 
