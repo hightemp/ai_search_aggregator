@@ -190,7 +190,30 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, ap
 	lines := strings.Split(content, "\n")
 	var queries []string
 	for _, l := range lines {
+		l = strings.TrimSpace(l)
+
+		// Удаляем нумерацию в начале строки (1., 2., 1), 2), и т.д.)
 		l = strings.TrimSpace(strings.TrimPrefix(l, "-"))
+
+		// Удаляем различные варианты нумерации
+		for i := 1; i <= 20; i++ {
+			prefixes := []string{
+				fmt.Sprintf("%d. ", i),
+				fmt.Sprintf("%d) ", i),
+				fmt.Sprintf("%d.", i),
+				fmt.Sprintf("%d)", i),
+			}
+			for _, prefix := range prefixes {
+				if strings.HasPrefix(l, prefix) {
+					l = strings.TrimSpace(l[len(prefix):])
+					break
+				}
+			}
+		}
+
+		// Удаляем кавычки в начале и конце
+		l = strings.Trim(l, `"'`)
+
 		if l != "" {
 			queries = append(queries, l)
 		}
