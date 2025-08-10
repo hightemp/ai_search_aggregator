@@ -100,10 +100,6 @@ func handleWebSocketSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig
 	}
 	defer conn.Close()
 
-	// Создаем контекст с таймаутом для всего поиска
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
-	defer cancel()
-
 	reqLogger := logger.WithRequestID(generateRequestID())
 	reqLogger.Info("websocket connection established")
 
@@ -119,7 +115,11 @@ func handleWebSocketSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig
 		}
 
 		if msg.Type == "search" {
-			go handleSearchMessage(ctx, conn, msg, cfg, reqLogger.logger)
+			go func() {
+				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+				defer cancel()
+				handleSearchMessage(ctx, conn, msg, cfg, reqLogger.logger)
+			}()
 		}
 	}
 }
