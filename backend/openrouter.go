@@ -31,20 +31,19 @@ type openRouterResponse struct {
 	} `json:"choices"`
 }
 
-var openRouterEndpoint = "https://openrouter.ai/api/v1/chat/completions"
 
 // Debug logging function for OpenRouter requests and responses
-func logOpenRouterRequest(apiType string, request openRouterRequest, response *openRouterResponse, err error, statusCode int) {
+func logOpenRouterRequest(cfg AppConfig, apiType string, request openRouterRequest, response *openRouterResponse, err error, statusCode int) {
 
-	if os.Getenv("DEBUG") != "true" {
+	if !cfg.Debug.Enabled {
 		return
 	}
 
 	// Log to both console and file
 	consoleLogger := NewLogger()
 
-	// Create or open log file in /tmp
-	logFileName := fmt.Sprintf("/tmp/openrouter_debug_%s.log", time.Now().Format("2006-01-02"))
+	// Create or open log file
+	logFileName := fmt.Sprintf("%s/openrouter_debug_%s.log", cfg.Debug.LogFile, time.Now().Format("2006-01-02"))
 	logFile, fileErr := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if fileErr != nil {
 		consoleLogger.Error("failed to open openrouter log file", "error", fileErr, "file", logFileName)
@@ -65,7 +64,6 @@ func logOpenRouterRequest(apiType string, request openRouterRequest, response *o
 	// Console log (short version)
 	consoleLogger.Info("openrouter_request_debug",
 		"api_type", apiType,
-		"endpoint", openRouterEndpoint,
 		"model", request.Model,
 	)
 
@@ -73,7 +71,6 @@ func logOpenRouterRequest(apiType string, request openRouterRequest, response *o
 	fileLogger.Info("openrouter_request_detailed",
 		"timestamp", timestamp,
 		"api_type", apiType,
-		"endpoint", openRouterEndpoint,
 		"model", request.Model,
 		"request_body", string(requestJSON),
 	)
@@ -133,33 +130,33 @@ func logOpenRouterRequest(apiType string, request openRouterRequest, response *o
 	}
 }
 
-func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, apiKey string) ([]string, error) {
-	if apiKey == "" {
+func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, cfg AppConfig) ([]string, error) {
+	if cfg.OpenRouter.APIKey == "" {
 		return nil, errors.New("OPENROUTER_API_KEY not set")
 	}
 
 	systemPrompt := fmt.Sprintf("You are a search assistant. Generate %d distinct web-search queries that would best answer the user's question. Respond with each query on a new line and nothing else.", n)
 
 	reqBody := openRouterRequest{
-		Model: "openai/gpt-4o-mini",
+		Model: cfg.OpenRouter.Model,
 		Messages: []openMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens: 256,
+		MaxTokens: cfg.OpenRouter.QueryGenMaxTokens,
 	}
 
 	b, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", openRouterEndpoint, bytes.NewReader(b))
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", cfg.OpenRouter.Endpoint, bytes.NewReader(b))
+	httpReq.Header.Set("Authorization", "Bearer "+cfg.OpenRouter.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Search Aggregator")
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: cfg.Timeouts.QueryGeneration}
 	resp, err := client.Do(httpReq)
 
 	// Log request always
-	logOpenRouterRequest("query_generation", reqBody, nil, err, 0)
+	logOpenRouterRequest(cfg, "query_generation", reqBody, nil, err, 0)
 
 	if err != nil {
 		return nil, err
@@ -169,18 +166,18 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, ap
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		// Log error response
-		logOpenRouterRequest("query_generation", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
+		logOpenRouterRequest(cfg, "query_generation", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
 		return nil, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var orResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
-		logOpenRouterRequest("query_generation", reqBody, nil, err, resp.StatusCode)
+		logOpenRouterRequest(cfg, "query_generation", reqBody, nil, err, resp.StatusCode)
 		return nil, err
 	}
 
 	// Log successful response
-	logOpenRouterRequest("query_generation", reqBody, &orResp, nil, resp.StatusCode)
+	logOpenRouterRequest(cfg, "query_generation", reqBody, &orResp, nil, resp.StatusCode)
 
 	if len(orResp.Choices) == 0 {
 		return nil, errors.New("no choices returned from openrouter")
@@ -226,8 +223,8 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, ap
 
 // filterByAIRelevance uses the LLM to classify which search results are relevant to the user's prompt.
 // It returns only those predicted as relevant while preserving order.
-func filterByAIRelevance(ctx context.Context, prompt string, results []SearchResult, apiKey string) ([]SearchResult, error) {
-	if apiKey == "" {
+func filterByAIRelevance(ctx context.Context, prompt string, results []SearchResult, cfg AppConfig) ([]SearchResult, error) {
+	if cfg.OpenRouter.APIKey == "" {
 		return nil, errors.New("OPENROUTER_API_KEY not set")
 	}
 	if len(results) == 0 {
@@ -235,10 +232,9 @@ func filterByAIRelevance(ctx context.Context, prompt string, results []SearchRes
 	}
 
 	// Limit evaluated items to bound token usage
-	const maxItems = 30
 	end := len(results)
-	if end > maxItems {
-		end = maxItems
+	if end > cfg.Limits.MaxItemsToFilter {
+		end = cfg.Limits.MaxItemsToFilter
 	}
 	subset := results[:end]
 
@@ -254,25 +250,25 @@ func filterByAIRelevance(ctx context.Context, prompt string, results []SearchRes
 	userPrompt := sb.String()
 
 	reqBody := openRouterRequest{
-		Model: "openai/gpt-4o-mini",
+		Model: cfg.OpenRouter.Model,
 		Messages: []openMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
-		MaxTokens: 64,
+		MaxTokens: cfg.OpenRouter.FilterMaxTokens,
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", openRouterEndpoint, bytes.NewReader(payload))
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", cfg.OpenRouter.Endpoint, bytes.NewReader(payload))
+	httpReq.Header.Set("Authorization", "Bearer "+cfg.OpenRouter.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Relevance Filter")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: cfg.Timeouts.AIRelevance}
 	resp, err := client.Do(httpReq)
 
 	// Log request always
-	logOpenRouterRequest("ai_relevance_filter", reqBody, nil, err, 0)
+	logOpenRouterRequest(cfg, "ai_relevance_filter", reqBody, nil, err, 0)
 
 	if err != nil {
 		return nil, err
@@ -282,18 +278,18 @@ func filterByAIRelevance(ctx context.Context, prompt string, results []SearchRes
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		// Log error response
-		logOpenRouterRequest("ai_relevance_filter", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
+		logOpenRouterRequest(cfg, "ai_relevance_filter", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
 		return nil, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var orResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
-		logOpenRouterRequest("ai_relevance_filter", reqBody, nil, err, resp.StatusCode)
+		logOpenRouterRequest(cfg, "ai_relevance_filter", reqBody, nil, err, resp.StatusCode)
 		return nil, err
 	}
 
 	// Log successful response
-	logOpenRouterRequest("ai_relevance_filter", reqBody, &orResp, nil, resp.StatusCode)
+	logOpenRouterRequest(cfg, "ai_relevance_filter", reqBody, &orResp, nil, resp.StatusCode)
 
 	if len(orResp.Choices) == 0 {
 		return nil, errors.New("no choices returned from openrouter")
@@ -349,8 +345,8 @@ func truncateForLLM(s string, max int) string {
 
 // isContentRelevantToPrompt judges a single page content for relevance to the user's query.
 // Returns true if relevant, false otherwise.
-func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content, apiKey string) (bool, error) {
-	if apiKey == "" {
+func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content string, cfg AppConfig) (bool, error) {
+	if cfg.OpenRouter.APIKey == "" {
 		return false, errors.New("OPENROUTER_API_KEY not set")
 	}
 	systemPrompt := "You are a strict binary relevance judge. Answer with a single character: 1 if the page content is relevant to the user's query, 0 if not. No explanation."
@@ -363,28 +359,28 @@ func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content,
 	userPrompt.WriteString("\nURL:\n")
 	userPrompt.WriteString(strings.TrimSpace(url))
 	userPrompt.WriteString("\n\nPage content (may be truncated):\n")
-	userPrompt.WriteString(truncateForLLM(content, 3500))
+	userPrompt.WriteString(truncateForLLM(content, cfg.Content.TruncationLength))
 
 	reqBody := openRouterRequest{
-		Model: "openai/gpt-4o-mini",
+		Model: cfg.OpenRouter.Model,
 		Messages: []openMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt.String()},
 		},
-		MaxTokens: 4,
+		MaxTokens: cfg.OpenRouter.ContentMaxTokens,
 	}
 
 	payload, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", openRouterEndpoint, bytes.NewReader(payload))
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq, _ := http.NewRequestWithContext(ctx, "POST", cfg.OpenRouter.Endpoint, bytes.NewReader(payload))
+	httpReq.Header.Set("Authorization", "Bearer "+cfg.OpenRouter.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Single Content Relevance")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: cfg.Timeouts.ContentRelevance}
 	resp, err := client.Do(httpReq)
 
 	// Log request always
-	logOpenRouterRequest("content_relevance", reqBody, nil, err, 0)
+	logOpenRouterRequest(cfg, "content_relevance", reqBody, nil, err, 0)
 
 	if err != nil {
 		return false, err
@@ -394,18 +390,18 @@ func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content,
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		// Log error response
-		logOpenRouterRequest("content_relevance", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
+		logOpenRouterRequest(cfg, "content_relevance", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
 		return false, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var orResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
-		logOpenRouterRequest("content_relevance", reqBody, nil, err, resp.StatusCode)
+		logOpenRouterRequest(cfg, "content_relevance", reqBody, nil, err, resp.StatusCode)
 		return false, err
 	}
 
 	// Log successful response
-	logOpenRouterRequest("content_relevance", reqBody, &orResp, nil, resp.StatusCode)
+	logOpenRouterRequest(cfg, "content_relevance", reqBody, &orResp, nil, resp.StatusCode)
 
 	if len(orResp.Choices) == 0 {
 		return false, errors.New("no choices returned from openrouter")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,11 +55,24 @@ type SearchResponse struct {
 	Results []SearchResult `json:"results"`
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// В продакшене здесь должна быть более строгая проверка
-		return true
-	},
+func createUpgrader(cfg AppConfig) websocket.Upgrader {
+	return websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			if !cfg.WebSocket.EnableOriginCheck {
+				return true
+			}
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return false
+			}
+			for _, allowed := range cfg.WebSocket.AllowedOrigins {
+				if strings.Contains(origin, allowed) {
+					return true
+				}
+			}
+			return false
+		},
+	}
 }
 
 // Типы сообщений WebSocket
@@ -93,6 +107,7 @@ type WSError struct {
 }
 
 func handleWebSocketSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig, logger *Logger) {
+	upgrader := createUpgrader(cfg)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logger.Error("failed to upgrade connection", "error", err)
@@ -116,7 +131,7 @@ func handleWebSocketSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig
 
 		if msg.Type == "search" {
 			go func() {
-				ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+				ctx, cancel := context.WithTimeout(r.Context(), cfg.WebSocket.SearchTimeout)
 				defer cancel()
 				handleSearchMessage(ctx, conn, msg, cfg, reqLogger.logger)
 			}()
@@ -148,13 +163,13 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	}
 	SanitizeSearchRequest(&searchReq)
 
-	if validationErrors := ValidateSearchRequest(&searchReq); len(validationErrors) > 0 {
+	if validationErrors := ValidateSearchRequest(&searchReq, cfg); len(validationErrors) > 0 {
 		sendSafeError(safeConn, "VALIDATION_FAILED", "Request validation failed", validationErrors.Error())
 		return
 	}
 
 	if searchReq.Settings.Queries == 0 {
-		searchReq.Settings.Queries = cfg.DefaultQueryCount
+		searchReq.Settings.Queries = cfg.Search.DefaultQueryCount
 	}
 
 	logger.Info("websocket search started",
@@ -167,7 +182,7 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	sendSafeStatus(safeConn, "generating_queries", 0, 1, "Генерация поисковых запросов...")
 
 	// Шаг 1: Генерация запросов
-	queries, err := generateQueriesWithOpenRouter(ctx, searchReq.Prompt, searchReq.Settings.Queries, cfg.OpenRouterAPIKey)
+	queries, err := generateQueriesWithOpenRouter(ctx, searchReq.Prompt, searchReq.Settings.Queries, cfg)
 	if err != nil {
 		sendSafeError(safeConn, "QUERY_GENERATION_FAILED", "Failed to generate queries", err.Error())
 		return
@@ -184,15 +199,15 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 		completed int
 	)
 
-	eg.SetLimit(5) // Ограничиваем количество одновременных запросов
+	eg.SetLimit(cfg.Search.MaxConcurrentQueries) // Ограничиваем количество одновременных запросов
 
 	for _, query := range queries {
 		query := query
 		eg.Go(func() error {
-			queryCtx, queryCancel := context.WithTimeout(ctx, 30*time.Second)
+			queryCtx, queryCancel := context.WithTimeout(ctx, cfg.Timeouts.SearxRequest)
 			defer queryCancel()
 
-			res, err := searchSearx(queryCtx, cfg.SearxURL, query, searchReq.Settings.Engines)
+			res, err := searchSearx(queryCtx, cfg, query, searchReq.Settings.Engines)
 			if err != nil {
 				logger.Error("searx search failed", "error", err, "query", query)
 				return err
@@ -257,7 +272,7 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 
 	resultsCh := make(chan contentEval, len(results))
 	var eg errgroup.Group
-	eg.SetLimit(3)
+	eg.SetLimit(cfg.Search.MaxConcurrentContent)
 
 	completed := 0
 	mu := sync.Mutex{}
@@ -265,15 +280,15 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 	for i := range results {
 		i := i
 		eg.Go(func() error {
-			contentCtx, contentCancel := context.WithTimeout(ctx, 20*time.Second)
+			contentCtx, contentCancel := context.WithTimeout(ctx, cfg.Timeouts.ContentFetch)
 			defer contentCancel()
 
-			content, err := fetchPageContent(contentCtx, results[i].URL)
+			content, err := fetchPageContent(contentCtx, results[i].URL, cfg)
 			if err != nil {
 				logger.Error("content fetch failed", "error", err, "url", results[i].URL)
 				resultsCh <- contentEval{idx: i, fetchFailed: true, err: err}
 			} else {
-				relevant, relErr := isContentRelevantToPrompt(contentCtx, prompt, results[i].Title, results[i].URL, content, cfg.OpenRouterAPIKey)
+				relevant, relErr := isContentRelevantToPrompt(contentCtx, prompt, results[i].Title, results[i].URL, content, cfg)
 				if relErr != nil {
 					logger.Error("content relevance evaluation failed", "error", relErr, "url", results[i].URL)
 				}
@@ -326,10 +341,9 @@ func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocke
 		err  error
 	}
 
-	const maxConcurrency = 3
 	resultsCh := make(chan relevanceEval, len(results))
 	var eg errgroup.Group
-	eg.SetLimit(maxConcurrency)
+	eg.SetLimit(cfg.Search.MaxConcurrentFilter)
 
 	completed := 0
 	mu := sync.Mutex{}
@@ -338,13 +352,13 @@ func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocke
 	for i := range results {
 		i := i
 		eg.Go(func() error {
-			relevanceCtx, relevanceCancel := context.WithTimeout(ctx, 30*time.Second)
+			relevanceCtx, relevanceCancel := context.WithTimeout(ctx, cfg.Timeouts.AIRelevance)
 			defer relevanceCancel()
 
 			// Используем существующую функцию isContentRelevantToPrompt для оценки одного элемента
 			// Передаем заголовок и сниппет как "контент"
 			content := results[i].Title + "\n" + results[i].Snippet
-			relevant, err := isContentRelevantToPrompt(relevanceCtx, prompt, results[i].Title, results[i].URL, content, cfg.OpenRouterAPIKey)
+			relevant, err := isContentRelevantToPrompt(relevanceCtx, prompt, results[i].Title, results[i].URL, content, cfg)
 
 			if err != nil {
 				logger.Error("ai relevance evaluation failed", "error", err, "url", results[i].URL)

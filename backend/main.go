@@ -48,7 +48,7 @@ func main() {
 	mainRouter.Handle("/", r)
 
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
+		Addr:         ":" + cfg.Server.Port,
 		Handler:      mainRouter,
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 60 * time.Second,
@@ -57,7 +57,7 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		logger.Info("starting server", "port", cfg.Port)
+		logger.Info("starting server", "port", cfg.Server.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("server failed to start", "error", err)
 			os.Exit(1)

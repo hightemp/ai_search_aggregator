@@ -23,13 +23,14 @@ type searxResponse struct {
 	Results []searxResultItem `json:"results"`
 }
 
-// logToFile записывает данные в файл логов в /tmp
-func logToFile(data string) error {
-	if os.Getenv("DEBUG") != "true" {
+// logToFile записывает данные в файл логов
+func logToFile(cfg AppConfig, data string) error {
+	if !cfg.Debug.Enabled || !cfg.Debug.LogRequests {
 		return nil
 	}
 
-	file, err := os.OpenFile("/tmp/searx_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFilePath := fmt.Sprintf("%s/searx_debug.log", cfg.Debug.LogFile)
+	file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
@@ -41,9 +42,9 @@ func logToFile(data string) error {
 	return err
 }
 
-func searchSearx(ctx context.Context, searxBase, query string, engines []string) ([]SearchResult, error) {
-	base := strings.TrimRight(searxBase, "/")
-	endpoint := fmt.Sprintf("%s/search?q=%s&format=json&language=en&locale=en-US", base, url.QueryEscape(query))
+func searchSearx(ctx context.Context, cfg AppConfig, query string, engines []string) ([]SearchResult, error) {
+	base := strings.TrimRight(cfg.Searx.URL, "/")
+	endpoint := fmt.Sprintf("%s/search?q=%s&format=json&language=%s&locale=%s", base, url.QueryEscape(query), cfg.Searx.Language, cfg.Searx.Locale)
 	if len(engines) > 0 {
 		// SearxNG accepts engines as comma-separated list
 		endpoint += "&engines=" + url.QueryEscape(strings.Join(engines, ","))
@@ -59,7 +60,7 @@ func searchSearx(ctx context.Context, searxBase, query string, engines []string)
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 	if requestJSON, err := json.MarshalIndent(requestData, "", "  "); err == nil {
-		logToFile(string(requestJSON))
+		logToFile(cfg, string(requestJSON))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
@@ -67,7 +68,7 @@ func searchSearx(ctx context.Context, searxBase, query string, engines []string)
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: cfg.Timeouts.SearxRequest}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -92,7 +93,7 @@ func searchSearx(ctx context.Context, searxBase, query string, engines []string)
 		"timestamp":   time.Now().Format(time.RFC3339),
 	}
 	if respJSON, err := json.MarshalIndent(responseData, "", "  "); err == nil {
-		logToFile(string(respJSON))
+		logToFile(cfg, string(respJSON))
 	}
 
 	var sr searxResponse

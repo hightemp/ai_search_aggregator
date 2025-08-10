@@ -22,7 +22,7 @@ func (v ValidationErrors) Error() string {
 }
 
 // ValidateSearchRequest валидирует запрос поиска
-func ValidateSearchRequest(req *SearchRequest) ValidationErrors {
+func ValidateSearchRequest(req *SearchRequest, cfg AppConfig) ValidationErrors {
 	var errors ValidationErrors
 
 	// Валидация prompt
@@ -33,27 +33,26 @@ func ValidateSearchRequest(req *SearchRequest) ValidationErrors {
 		})
 	}
 
-	if len(req.Prompt) > 1000 {
+	if len(req.Prompt) > cfg.Validation.MaxPromptLength {
 		errors = append(errors, ValidationError{
 			Field:   "prompt",
-			Message: "prompt cannot exceed 1000 characters",
+			Message: fmt.Sprintf("prompt cannot exceed %d characters", cfg.Validation.MaxPromptLength),
 		})
 	}
 
 	// Валидация settings
-	if req.Settings.Queries < 1 || req.Settings.Queries > 20 {
+	if req.Settings.Queries < 1 || req.Settings.Queries > cfg.Validation.MaxQueryCount {
 		errors = append(errors, ValidationError{
 			Field:   "settings.queries",
-			Message: "queries must be between 1 and 20",
+			Message: fmt.Sprintf("queries must be between 1 and %d", cfg.Validation.MaxQueryCount),
 		})
 	}
 
 	// Валидация engines
 	if len(req.Settings.Engines) > 0 {
-		validEngines := map[string]bool{
-			"google": true, "bing": true, "duckduckgo": true, "brave": true,
-			"qwant": true, "yandex": true, "wikipedia": true, "github": true,
-			"stackoverflow": true, "reddit": true, "youtube": true,
+		validEngines := make(map[string]bool)
+		for _, engine := range cfg.Validation.SupportedEngines {
+			validEngines[engine] = true
 		}
 
 		for _, engine := range req.Settings.Engines {
@@ -65,10 +64,10 @@ func ValidateSearchRequest(req *SearchRequest) ValidationErrors {
 			}
 		}
 
-		if len(req.Settings.Engines) > 10 {
+		if len(req.Settings.Engines) > cfg.Validation.MaxEngineCount {
 			errors = append(errors, ValidationError{
 				Field:   "settings.engines",
-				Message: "cannot specify more than 10 engines",
+				Message: fmt.Sprintf("cannot specify more than %d engines", cfg.Validation.MaxEngineCount),
 			})
 		}
 	}

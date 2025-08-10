@@ -8,12 +8,12 @@ import (
 	readability "github.com/go-shiori/go-readability"
 )
 
-func fetchPageContent(ctx context.Context, targetURL string) (string, error) {
+func fetchPageContent(ctx context.Context, targetURL string, cfg AppConfig) (string, error) {
 	// Derive timeout from context if available
-	timeout := 20 * time.Second
+	timeout := cfg.Timeouts.ContentFetch
 	if deadline, ok := ctx.Deadline(); ok {
 		d := time.Until(deadline)
-		if d > 0 {
+		if d > 0 && d < timeout {
 			timeout = d
 		}
 	}
