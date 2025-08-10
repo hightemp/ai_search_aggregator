@@ -12,6 +12,24 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// SafeWebSocketConn обеспечивает безопасную запись в WebSocket
+type SafeWebSocketConn struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func NewSafeWebSocketConn(conn *websocket.Conn) *SafeWebSocketConn {
+	return &SafeWebSocketConn{
+		conn: conn,
+	}
+}
+
+func (sws *SafeWebSocketConn) WriteJSON(v interface{}) error {
+	sws.mu.Lock()
+	defer sws.mu.Unlock()
+	return sws.conn.WriteJSON(v)
+}
+
 // Базовые типы для поиска
 type SearchRequest struct {
 	Prompt   string   `json:"prompt"`
@@ -108,17 +126,18 @@ func handleWebSocketSearch(w http.ResponseWriter, r *http.Request, cfg AppConfig
 
 func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessage, cfg AppConfig, logger *Logger) {
 	startTime := time.Now()
+	safeConn := NewSafeWebSocketConn(conn)
 
 	// Парсим поисковый запрос
 	reqData, err := json.Marshal(msg.Data)
 	if err != nil {
-		sendError(conn, "INVALID_REQUEST", "Failed to parse request", err.Error())
+		sendSafeError(safeConn, "INVALID_REQUEST", "Failed to parse request", err.Error())
 		return
 	}
 
 	var req WSSearchRequest
 	if err := json.Unmarshal(reqData, &req); err != nil {
-		sendError(conn, "INVALID_REQUEST", "Failed to decode request", err.Error())
+		sendSafeError(safeConn, "INVALID_REQUEST", "Failed to decode request", err.Error())
 		return
 	}
 
@@ -130,7 +149,7 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	SanitizeSearchRequest(&searchReq)
 
 	if validationErrors := ValidateSearchRequest(&searchReq); len(validationErrors) > 0 {
-		sendError(conn, "VALIDATION_FAILED", "Request validation failed", validationErrors.Error())
+		sendSafeError(safeConn, "VALIDATION_FAILED", "Request validation failed", validationErrors.Error())
 		return
 	}
 
@@ -145,22 +164,22 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	)
 
 	// Отправляем статус начала поиска
-	sendStatus(conn, "generating_queries", 0, 1, "Генерация поисковых запросов...")
+	sendSafeStatus(safeConn, "generating_queries", 0, 1, "Генерация поисковых запросов...")
 
 	// Шаг 1: Генерация запросов
 	queries, err := generateQueriesWithOpenRouter(ctx, searchReq.Prompt, searchReq.Settings.Queries, cfg.OpenRouterAPIKey)
 	if err != nil {
-		sendError(conn, "QUERY_GENERATION_FAILED", "Failed to generate queries", err.Error())
+		sendSafeError(safeConn, "QUERY_GENERATION_FAILED", "Failed to generate queries", err.Error())
 		return
 	}
 
 	logger.Info("queries generated", "count", len(queries))
-	sendStatus(conn, "searching", 0, len(queries), "Выполнение поисковых запросов...")
+	sendSafeStatus(safeConn, "searching", 0, len(queries), "Выполнение поисковых запросов...")
 
 	// Шаг 2: Выполнение поисков
 	var (
 		eg        errgroup.Group
-		mu        sync.Mutex
+		mu        sync.Mutex // для защиты results и completed
 		results   []SearchResult
 		completed int
 	)
@@ -182,11 +201,12 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 			mu.Lock()
 			results = append(results, res...)
 			completed++
+			currentCompleted := completed // копируем для использования вне блокировки
 			mu.Unlock()
 
-			// Отправляем обновление прогресса
-			sendStatus(conn, "searching", completed, len(queries),
-				"Выполнено запросов: %d/%d", completed, len(queries))
+			// Отправляем обновление прогресса (безопасно)
+			sendSafeStatus(safeConn, "searching", currentCompleted, len(queries),
+				"Выполнено запросов: %d/%d", currentCompleted, len(queries))
 
 			return nil
 		})
@@ -194,21 +214,21 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 
 	if err := eg.Wait(); err != nil {
 		logger.Error("searx search group failed", "error", err)
-		sendError(conn, "SEARCH_FAILED", "Search failed", err.Error())
+		sendSafeError(safeConn, "SEARCH_FAILED", "Search failed", err.Error())
 		return
 	}
 
 	// Дедупликация и ранжирование
-	sendStatus(conn, "processing", 0, 1, "Обработка результатов...")
+	sendSafeStatus(safeConn, "processing", 0, 1, "Обработка результатов...")
 	ranked := deduplicateAndRank(results)
 	logger.Info("deduplication completed", "input_count", len(results), "output_count", len(ranked))
 
 	// Фильтрация по релевантности
 	if searchReq.Settings.ContentMode {
-		sendStatus(conn, "analyzing_content", 0, len(ranked), "Анализ содержимого страниц...")
-		ranked = analyzeContentWithProgress(ctx, conn, searchReq.Prompt, ranked, cfg, logger)
+		sendSafeStatus(safeConn, "analyzing_content", 0, len(ranked), "Анализ содержимого страниц...")
+		ranked = analyzeContentWithProgress(ctx, safeConn, searchReq.Prompt, ranked, cfg, logger)
 	} else {
-		sendStatus(conn, "ai_filtering", 0, 1, "ИИ-фильтрация результатов...")
+		sendSafeStatus(safeConn, "ai_filtering", 0, 1, "ИИ-фильтрация результатов...")
 		filtered, err := filterByAIRelevance(ctx, searchReq.Prompt, ranked, cfg.OpenRouterAPIKey)
 		if err == nil {
 			ranked = filtered
@@ -227,11 +247,11 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 		Elapsed: elapsed,
 	}
 
-	sendMessage(conn, "search_complete", response)
+	sendSafeMessage(safeConn, "search_complete", response)
 	logger.Info("websocket search completed", "results", len(ranked), "elapsed_ms", elapsed)
 }
 
-func analyzeContentWithProgress(ctx context.Context, conn *websocket.Conn, prompt string, results []SearchResult, cfg AppConfig, logger *Logger) []SearchResult {
+func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn, prompt string, results []SearchResult, cfg AppConfig, logger *Logger) []SearchResult {
 	type contentEval struct {
 		idx         int
 		content     string
@@ -270,7 +290,7 @@ func analyzeContentWithProgress(ctx context.Context, conn *websocket.Conn, promp
 			mu.Unlock()
 
 			// Отправляем обновление прогресса
-			sendStatus(conn, "analyzing_content", completed, len(results),
+			sendSafeStatus(safeConn, "analyzing_content", completed, len(results),
 				"Проанализировано страниц: %d/%d", completed, len(results))
 
 			return nil
@@ -312,6 +332,14 @@ func sendMessage(conn *websocket.Conn, msgType string, data interface{}) error {
 	return conn.WriteJSON(msg)
 }
 
+func sendSafeMessage(safeConn *SafeWebSocketConn, msgType string, data interface{}) error {
+	msg := WSMessage{
+		Type: msgType,
+		Data: data,
+	}
+	return safeConn.WriteJSON(msg)
+}
+
 func sendStatus(conn *websocket.Conn, stage string, progress, total int, format string, args ...interface{}) {
 	var message string
 	if len(args) > 0 {
@@ -330,6 +358,24 @@ func sendStatus(conn *websocket.Conn, stage string, progress, total int, format 
 	sendMessage(conn, "status", status)
 }
 
+func sendSafeStatus(safeConn *SafeWebSocketConn, stage string, progress, total int, format string, args ...interface{}) {
+	var message string
+	if len(args) > 0 {
+		message = fmt.Sprintf(format, args...)
+	} else {
+		message = format
+	}
+
+	status := WSSearchStatus{
+		Stage:     stage,
+		Progress:  progress,
+		Total:     total,
+		Message:   message,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	sendSafeMessage(safeConn, "status", status)
+}
+
 func sendError(conn *websocket.Conn, code, message, details string) {
 	err := WSError{
 		Code:    code,
@@ -337,4 +383,13 @@ func sendError(conn *websocket.Conn, code, message, details string) {
 		Details: details,
 	}
 	sendMessage(conn, "error", err)
+}
+
+func sendSafeError(safeConn *SafeWebSocketConn, code, message, details string) {
+	err := WSError{
+		Code:    code,
+		Message: message,
+		Details: details,
+	}
+	sendSafeMessage(safeConn, "error", err)
 }

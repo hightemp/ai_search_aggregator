@@ -155,7 +155,7 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, ap
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Search Aggregator")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(httpReq)
 
 	// Log request always
