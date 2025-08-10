@@ -38,5 +38,5 @@ export interface WSSearchStatus {
 export interface WSSearchResult {
   queries: string[]
   results: SearchResult[]
-  elapsed: number
+  elapsed_ms: number
 }

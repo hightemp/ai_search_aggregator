@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -30,6 +32,106 @@ type openRouterResponse struct {
 }
 
 var openRouterEndpoint = "https://openrouter.ai/api/v1/chat/completions"
+
+// Debug logging function for OpenRouter requests and responses
+func logOpenRouterRequest(apiType string, request openRouterRequest, response *openRouterResponse, err error, statusCode int) {
+
+	if os.Getenv("DEBUG") != "true" {
+		return
+	}
+
+	// Log to both console and file
+	consoleLogger := NewLogger()
+
+	// Create or open log file in /tmp
+	logFileName := fmt.Sprintf("/tmp/openrouter_debug_%s.log", time.Now().Format("2006-01-02"))
+	logFile, fileErr := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if fileErr != nil {
+		consoleLogger.Error("failed to open openrouter log file", "error", fileErr, "file", logFileName)
+		return
+	}
+	defer logFile.Close()
+
+	// Create file logger
+	fileLogger := slog.New(slog.NewJSONHandler(logFile, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	timestamp := time.Now().Format(time.RFC3339)
+
+	// Log request to both console and file
+	requestJSON, _ := json.MarshalIndent(request, "", "  ")
+
+	// Console log (short version)
+	consoleLogger.Info("openrouter_request_debug",
+		"api_type", apiType,
+		"endpoint", openRouterEndpoint,
+		"model", request.Model,
+	)
+
+	// File log (detailed version)
+	fileLogger.Info("openrouter_request_detailed",
+		"timestamp", timestamp,
+		"api_type", apiType,
+		"endpoint", openRouterEndpoint,
+		"model", request.Model,
+		"request_body", string(requestJSON),
+	)
+
+	// Log response
+	if err != nil {
+		// Console log
+		consoleLogger.Error("openrouter_response_error",
+			"api_type", apiType,
+			"error", err.Error(),
+			"status_code", statusCode,
+		)
+
+		// File log
+		fileLogger.Error("openrouter_response_error_detailed",
+			"timestamp", timestamp,
+			"api_type", apiType,
+			"error", err.Error(),
+			"status_code", statusCode,
+		)
+	} else if response != nil {
+		responseJSON, _ := json.MarshalIndent(response, "", "  ")
+
+		// Console log (short version)
+		consoleLogger.Info("openrouter_response_debug",
+			"api_type", apiType,
+			"status_code", statusCode,
+			"choices_count", len(response.Choices),
+		)
+
+		// File log (detailed version)
+		fileLogger.Info("openrouter_response_detailed",
+			"timestamp", timestamp,
+			"api_type", apiType,
+			"status_code", statusCode,
+			"choices_count", len(response.Choices),
+			"response_body", string(responseJSON),
+		)
+
+		// Log the actual content separately for easier reading
+		if len(response.Choices) > 0 {
+			content := response.Choices[0].Message.Content
+
+			// Console log
+			consoleLogger.Info("openrouter_content_debug",
+				"api_type", apiType,
+				"content", content,
+			)
+
+			// File log
+			fileLogger.Info("openrouter_content_detailed",
+				"timestamp", timestamp,
+				"api_type", apiType,
+				"content", content,
+			)
+		}
+	}
+}
 
 func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, apiKey string) ([]string, error) {
 	if apiKey == "" {
@@ -55,6 +157,10 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, ap
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
+
+	// Log request always
+	logOpenRouterRequest("query_generation", reqBody, nil, err, 0)
+
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +168,19 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, ap
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		// Log error response
+		logOpenRouterRequest("query_generation", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
 		return nil, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var orResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
+		logOpenRouterRequest("query_generation", reqBody, nil, err, resp.StatusCode)
 		return nil, err
 	}
+
+	// Log successful response
+	logOpenRouterRequest("query_generation", reqBody, &orResp, nil, resp.StatusCode)
 
 	if len(orResp.Choices) == 0 {
 		return nil, errors.New("no choices returned from openrouter")
@@ -135,6 +247,10 @@ func filterByAIRelevance(ctx context.Context, prompt string, results []SearchRes
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
+
+	// Log request always
+	logOpenRouterRequest("ai_relevance_filter", reqBody, nil, err, 0)
+
 	if err != nil {
 		return nil, err
 	}
@@ -142,13 +258,20 @@ func filterByAIRelevance(ctx context.Context, prompt string, results []SearchRes
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		// Log error response
+		logOpenRouterRequest("ai_relevance_filter", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
 		return nil, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var orResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
+		logOpenRouterRequest("ai_relevance_filter", reqBody, nil, err, resp.StatusCode)
 		return nil, err
 	}
+
+	// Log successful response
+	logOpenRouterRequest("ai_relevance_filter", reqBody, &orResp, nil, resp.StatusCode)
+
 	if len(orResp.Choices) == 0 {
 		return nil, errors.New("no choices returned from openrouter")
 	}
@@ -236,6 +359,10 @@ func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content,
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
+
+	// Log request always
+	logOpenRouterRequest("content_relevance", reqBody, nil, err, 0)
+
 	if err != nil {
 		return false, err
 	}
@@ -243,13 +370,20 @@ func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		// Log error response
+		logOpenRouterRequest("content_relevance", reqBody, nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body)), resp.StatusCode)
 		return false, fmt.Errorf("openrouter status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var orResp openRouterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&orResp); err != nil {
+		logOpenRouterRequest("content_relevance", reqBody, nil, err, resp.StatusCode)
 		return false, err
 	}
+
+	// Log successful response
+	logOpenRouterRequest("content_relevance", reqBody, &orResp, nil, resp.StatusCode)
+
 	if len(orResp.Choices) == 0 {
 		return false, errors.New("no choices returned from openrouter")
 	}
