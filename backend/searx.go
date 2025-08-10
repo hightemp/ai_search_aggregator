@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -21,12 +23,43 @@ type searxResponse struct {
 	Results []searxResultItem `json:"results"`
 }
 
+// logToFile записывает данные в файл логов в /tmp
+func logToFile(data string) error {
+	if os.Getenv("DEBUG") != "true" {
+		return nil
+	}
+
+	file, err := os.OpenFile("/tmp/searx_debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	logEntry := fmt.Sprintf("[%s] %s\n", timestamp, data)
+	_, err = file.WriteString(logEntry)
+	return err
+}
+
 func searchSearx(ctx context.Context, searxBase, query string, engines []string) ([]SearchResult, error) {
 	base := strings.TrimRight(searxBase, "/")
 	endpoint := fmt.Sprintf("%s/search?q=%s&format=json&language=en&locale=en-US", base, url.QueryEscape(query))
 	if len(engines) > 0 {
 		// SearxNG accepts engines as comma-separated list
 		endpoint += "&engines=" + url.QueryEscape(strings.Join(engines, ","))
+	}
+
+	// Логируем запрос в JSON формате
+	requestData := map[string]interface{}{
+		"type":      "request",
+		"method":    "GET",
+		"url":       endpoint,
+		"query":     query,
+		"engines":   engines,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	if requestJSON, err := json.MarshalIndent(requestData, "", "  "); err == nil {
+		logToFile(string(requestJSON))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
@@ -41,8 +74,29 @@ func searchSearx(ctx context.Context, searxBase, query string, engines []string)
 	}
 	defer resp.Body.Close()
 
+	// Читаем тело ответа для логирования
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Логируем ответ в JSON формате
+	var responseJSON interface{}
+	json.Unmarshal(body, &responseJSON)
+
+	responseData := map[string]interface{}{
+		"type":        "response",
+		"status_code": resp.StatusCode,
+		"headers":     resp.Header,
+		"body":        responseJSON,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	}
+	if respJSON, err := json.MarshalIndent(responseData, "", "  "); err == nil {
+		logToFile(string(respJSON))
+	}
+
 	var sr searxResponse
-	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+	if err := json.Unmarshal(body, &sr); err != nil {
 		return nil, err
 	}
 
