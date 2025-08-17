@@ -40,6 +40,18 @@ services:
       - "8081:8080"
     environment:
       - BASE_URL=http://localhost:8081
+    depends_on:
+      - searx_proxy
+    networks:
+      - internal
+  
+  searx_proxy:
+    # https://github.com/hightemp/go_proxy_mux
+    image: hightemp/go_proxy_mux:1.0.2
+    ports:
+      - "8380:8380"
+    volumes:
+      - ./config.yaml:/root/config.yaml
     networks:
       - internal
 

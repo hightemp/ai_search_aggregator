@@ -209,6 +209,11 @@ outgoing:
   #    - 1.1.1.1
   #    - 1.1.1.2
   #    - fe80::/126
+  proxies:
+    all://:
+      - http://searx_proxy:8380
+  extra_proxy_timeout: 5.0
+  retries: 1
 
 # External plugin configuration, for more details see
 #   https://docs.searxng.org/dev/plugins.html
