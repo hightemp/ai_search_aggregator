@@ -316,7 +316,8 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 		if r.fetchFailed {
 			keepMap[r.idx] = false
 		} else if r.err != nil {
-			keepMap[r.idx] = true // graceful degrade
+			keepMap[r.idx] = false
+			// keepMap[r.idx] = true // graceful degrade
 		} else {
 			keepMap[r.idx] = r.keep
 		}

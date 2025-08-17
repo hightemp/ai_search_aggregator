@@ -212,7 +212,6 @@ outgoing:
   proxies:
     all://:
       - http://searx_proxy:8380
-  extra_proxy_timeout: 5.0
   retries: 1
 
 # External plugin configuration, for more details see
