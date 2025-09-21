@@ -1,6 +1,6 @@
 # AI Search Aggregator
 
-A lightweight web application that enhances traditional web search by using AI to generate multiple focused queries and execute them in parallel via SearxNG and filtering with AI.
+A lightweight web application (MVP) that enhances traditional web search by using AI to generate multiple focused queries and execute them in parallel via SearxNG and filtering with AI.
 
 See `deploy/env.example`
 
@@ -33,3 +33,5 @@ outgoing:
 ## License
 
 MIT
+
+[](https://asdertasd.site/counter/ai_search_aggregator)
