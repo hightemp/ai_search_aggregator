@@ -34,4 +34,4 @@ outgoing:
 
 MIT
 
-[](https://asdertasd.site/counter/ai_search_aggregator)
+![](https://asdertasd.site/counter/ai_search_aggregator)
