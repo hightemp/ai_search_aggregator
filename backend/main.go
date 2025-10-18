@@ -16,6 +16,24 @@ func main() {
 	cfg := loadConfig()
 	logger := NewLogger()
 
+	// Логируем эффективную конфигурацию при старте
+	logger.Info("effective_config",
+		"openrouter_model", cfg.OpenRouter.Model,
+		"search_max_concurrent_queries", cfg.Search.MaxConcurrentQueries,
+		"search_max_concurrent_content", cfg.Search.MaxConcurrentContent,
+		"search_max_concurrent_filter", cfg.Search.MaxConcurrentFilter,
+		"content_truncation_length", cfg.Content.TruncationLength,
+	)
+	logger.Info("effective_timeouts",
+		"http_client", cfg.Timeouts.HTTPClient.String(),
+		"searx_request", cfg.Timeouts.SearxRequest.String(),
+		"content_fetch", cfg.Timeouts.ContentFetch.String(),
+		"openrouter_api", cfg.Timeouts.OpenRouterAPI.String(),
+		"query_generation", cfg.Timeouts.QueryGeneration.String(),
+		"ai_relevance", cfg.Timeouts.AIRelevance.String(),
+		"content_relevance", cfg.Timeouts.ContentRelevance.String(),
+	)
+
 	// Создаем главный роутер
 	mainRouter := http.NewServeMux()
 

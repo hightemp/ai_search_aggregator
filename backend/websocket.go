@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -274,8 +275,7 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 	var eg errgroup.Group
 	eg.SetLimit(cfg.Search.MaxConcurrentContent)
 
-	completed := 0
-	mu := sync.Mutex{}
+	reporter := NewProgressReporter(safeConn, "analyzing_content", len(results), "Проанализировано страниц: %d/%d")
 
 	for i := range results {
 		i := i
@@ -288,20 +288,17 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 				logger.Error("content fetch failed", "error", err, "url", results[i].URL)
 				resultsCh <- contentEval{idx: i, fetchFailed: true, err: err}
 			} else {
-				relevant, relErr := isContentRelevantToPrompt(contentCtx, prompt, results[i].Title, results[i].URL, content, cfg)
+				relCtx, relCancel := context.WithTimeout(ctx, cfg.Timeouts.ContentRelevance)
+				defer relCancel()
+				relevant, relErr := isContentRelevantToPrompt(relCtx, prompt, results[i].Title, results[i].URL, content, cfg)
 				if relErr != nil {
 					logger.Error("content relevance evaluation failed", "error", relErr, "url", results[i].URL)
 				}
 				resultsCh <- contentEval{idx: i, content: content, keep: relErr == nil && relevant, err: relErr}
 			}
 
-			mu.Lock()
-			completed++
-			mu.Unlock()
-
-			// Отправляем обновление прогресса
-			sendSafeStatus(safeConn, "analyzing_content", completed, len(results),
-				"Проанализировано страниц: %d/%d", completed, len(results))
+			// Уведомляем агрегатор прогресса
+			reporter.Inc()
 
 			return nil
 		})
@@ -309,6 +306,7 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 
 	_ = eg.Wait()
 	close(resultsCh)
+	reporter.Close()
 
 	// Фильтруем результаты
 	keepMap := make(map[int]bool, len(results))
@@ -346,8 +344,7 @@ func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocke
 	var eg errgroup.Group
 	eg.SetLimit(cfg.Search.MaxConcurrentFilter)
 
-	completed := 0
-	mu := sync.Mutex{}
+	reporter := NewProgressReporter(safeConn, "ai_filtering", len(results), "Проанализировано результатов: %d/%d")
 
 	// Обрабатываем каждый результат по отдельности
 	for i := range results {
@@ -369,14 +366,8 @@ func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocke
 				resultsCh <- relevanceEval{idx: i, keep: relevant, err: nil}
 			}
 
-			mu.Lock()
-			completed++
-			currentCompleted := completed
-			mu.Unlock()
-
-			// Отправляем обновление прогресса
-			sendSafeStatus(safeConn, "ai_filtering", currentCompleted, len(results),
-				"Проанализировано результатов: %d/%d", currentCompleted, len(results))
+			// Уведомляем агрегатор прогресса
+			reporter.Inc()
 
 			return nil
 		})
@@ -384,6 +375,7 @@ func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocke
 
 	_ = eg.Wait()
 	close(resultsCh)
+	reporter.Close()
 
 	// Собираем результаты оценки
 	keepMap := make(map[int]bool)
@@ -473,4 +465,67 @@ func sendSafeError(safeConn *SafeWebSocketConn, code, message, details string) {
 		Details: details,
 	}
 	sendSafeMessage(safeConn, "error", err)
+}
+
+// ProgressReporter агрегирует и отправляет статус прогресса из воркеров неблокирующе.
+type ProgressReporter struct {
+	safeConn   *SafeWebSocketConn
+	stage      string
+	total      int
+	messageFmt string
+
+	ticker   *time.Ticker
+	done     chan struct{}
+	counter  int64
+	lastSent int64
+}
+
+// NewProgressReporter создает агрегатор, который шлет обновления не чаще, чем раз в 300мс.
+func NewProgressReporter(safeConn *SafeWebSocketConn, stage string, total int, messageFmt string) *ProgressReporter {
+	pr := &ProgressReporter{
+		safeConn:   safeConn,
+		stage:      stage,
+		total:      total,
+		messageFmt: messageFmt,
+		ticker:     time.NewTicker(300 * time.Millisecond),
+		done:       make(chan struct{}),
+	}
+	go pr.loop()
+	return pr
+}
+
+func (p *ProgressReporter) loop() {
+	for {
+		select {
+		case <-p.ticker.C:
+			p.flush()
+		case <-p.done:
+			p.flush() // финальная отправка
+			p.ticker.Stop()
+			return
+		}
+	}
+}
+
+func (p *ProgressReporter) flush() {
+	current := atomic.LoadInt64(&p.counter)
+	if current == p.lastSent {
+		return
+	}
+	p.lastSent = current
+	if current > int64(p.total) {
+		current = int64(p.total)
+	}
+	// Отправляем статус; используем заданный текст с форматированием.
+	sendSafeStatus(p.safeConn, p.stage, int(current), p.total, p.messageFmt, int(current), p.total)
+}
+
+// Inc увеличивает счетчик прогресса на 1, не блокируя воркера.
+func (p *ProgressReporter) Inc() {
+	atomic.AddInt64(&p.counter, 1)
+}
+
+// Close завершает агрегатор и отправляет финальный статус.
+func (p *ProgressReporter) Close() {
+	close(p.done)
 }

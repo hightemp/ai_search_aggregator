@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +32,28 @@ type openRouterResponse struct {
 	} `json:"choices"`
 }
 
+// // Shared OpenRouter HTTP client with tuned Transport for high concurrency.
+// var for lazy, thread-safe initialization.
+var (
+	openRouterClientOnce sync.Once
+	openRouterClient     *http.Client
+)
+
+func getOpenRouterClient(cfg AppConfig) *http.Client {
+	openRouterClientOnce.Do(func() {
+		tr := &http.Transport{
+			MaxIdleConns:        512,
+			MaxIdleConnsPerHost: 256,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+		}
+		// Important: rely on per-request context timeouts, keep Client.Timeout = 0
+		openRouterClient = &http.Client{
+			Transport: tr,
+		}
+	})
+	return openRouterClient
+}
 
 // Debug logging function for OpenRouter requests and responses
 func logOpenRouterRequest(cfg AppConfig, apiType string, request openRouterRequest, response *openRouterResponse, err error, statusCode int) {
@@ -147,12 +170,14 @@ func generateQueriesWithOpenRouter(ctx context.Context, prompt string, n int, cf
 	}
 
 	b, _ := json.Marshal(reqBody)
-	httpReq, _ := http.NewRequestWithContext(ctx, "POST", cfg.OpenRouter.Endpoint, bytes.NewReader(b))
+	ctxQ, cancel := context.WithTimeout(ctx, cfg.Timeouts.QueryGeneration)
+	defer cancel()
+	httpReq, _ := http.NewRequestWithContext(ctxQ, "POST", cfg.OpenRouter.Endpoint, bytes.NewReader(b))
 	httpReq.Header.Set("Authorization", "Bearer "+cfg.OpenRouter.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Search Aggregator")
 
-	client := &http.Client{Timeout: cfg.Timeouts.QueryGeneration}
+	client := getOpenRouterClient(cfg)
 	resp, err := client.Do(httpReq)
 
 	// Log request always
@@ -258,13 +283,18 @@ func filterByAIRelevance(ctx context.Context, prompt string, results []SearchRes
 		MaxTokens: cfg.OpenRouter.FilterMaxTokens,
 	}
 
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cfg.Timeouts.AIRelevance)
+		defer cancel()
+	}
 	payload, _ := json.Marshal(reqBody)
 	httpReq, _ := http.NewRequestWithContext(ctx, "POST", cfg.OpenRouter.Endpoint, bytes.NewReader(payload))
 	httpReq.Header.Set("Authorization", "Bearer "+cfg.OpenRouter.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Relevance Filter")
 
-	client := &http.Client{Timeout: cfg.Timeouts.AIRelevance}
+	client := getOpenRouterClient(cfg)
 	resp, err := client.Do(httpReq)
 
 	// Log request always
@@ -376,7 +406,7 @@ func isContentRelevantToPrompt(ctx context.Context, prompt, title, url, content 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Title", "AI Single Content Relevance")
 
-	client := &http.Client{Timeout: cfg.Timeouts.ContentRelevance}
+	client := getOpenRouterClient(cfg)
 	resp, err := client.Do(httpReq)
 
 	// Log request always
