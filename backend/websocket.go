@@ -180,7 +180,7 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	)
 
 	// Отправляем статус начала поиска
-	sendSafeStatus(safeConn, "generating_queries", 0, 1, "Генерация поисковых запросов...")
+	sendSafeStatus(safeConn, "generating_queries", 0, 1, "Generating search queries...")
 
 	// Шаг 1: Генерация запросов
 	queries, err := generateQueriesWithOpenRouter(ctx, searchReq.Prompt, searchReq.Settings.Queries, cfg)
@@ -190,7 +190,7 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	}
 
 	logger.Info("queries generated", "count", len(queries))
-	sendSafeStatus(safeConn, "searching", 0, len(queries), "Выполнение поисковых запросов...")
+	sendSafeStatus(safeConn, "searching", 0, len(queries), "Executing search queries...")
 
 	// Шаг 2: Выполнение поисков
 	var (
@@ -222,7 +222,7 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 
 			// Отправляем обновление прогресса (безопасно)
 			sendSafeStatus(safeConn, "searching", currentCompleted, len(queries),
-				"Выполнено запросов: %d/%d", currentCompleted, len(queries))
+				"Completed queries: %d/%d", currentCompleted, len(queries))
 
 			return nil
 		})
@@ -235,16 +235,16 @@ func handleSearchMessage(ctx context.Context, conn *websocket.Conn, msg WSMessag
 	}
 
 	// Дедупликация и ранжирование
-	sendSafeStatus(safeConn, "processing", 0, 1, "Обработка результатов...")
+	sendSafeStatus(safeConn, "processing", 0, 1, "Processing results...")
 	ranked := deduplicateAndRank(results)
 	logger.Info("deduplication completed", "input_count", len(results), "output_count", len(ranked))
 
 	// Фильтрация по релевантности
 	if searchReq.Settings.ContentMode {
-		sendSafeStatus(safeConn, "analyzing_content", 0, len(ranked), "Анализ содержимого страниц...")
+		sendSafeStatus(safeConn, "analyzing_content", 0, len(ranked), "Analyzing page content...")
 		ranked = analyzeContentWithProgress(ctx, safeConn, searchReq.Prompt, ranked, cfg, logger)
 	} else {
-		sendSafeStatus(safeConn, "ai_filtering", 0, len(ranked), "ИИ-фильтрация результатов...")
+		sendSafeStatus(safeConn, "ai_filtering", 0, len(ranked), "AI filtering results...")
 		ranked = filterByAIRelevanceWithProgress(ctx, safeConn, searchReq.Prompt, ranked, cfg, logger)
 		logger.Info("ai filter completed", "output_items", len(ranked))
 	}
@@ -275,7 +275,7 @@ func analyzeContentWithProgress(ctx context.Context, safeConn *SafeWebSocketConn
 	var eg errgroup.Group
 	eg.SetLimit(cfg.Search.MaxConcurrentContent)
 
-	reporter := NewProgressReporter(safeConn, "analyzing_content", len(results), "Проанализировано страниц: %d/%d")
+	reporter := NewProgressReporter(safeConn, "analyzing_content", len(results), "Pages analyzed: %d/%d")
 
 	for i := range results {
 		i := i
@@ -344,7 +344,7 @@ func filterByAIRelevanceWithProgress(ctx context.Context, safeConn *SafeWebSocke
 	var eg errgroup.Group
 	eg.SetLimit(cfg.Search.MaxConcurrentFilter)
 
-	reporter := NewProgressReporter(safeConn, "ai_filtering", len(results), "Проанализировано результатов: %d/%d")
+	reporter := NewProgressReporter(safeConn, "ai_filtering", len(results), "Results analyzed: %d/%d")
 
 	// Обрабатываем каждый результат по отдельности
 	for i := range results {

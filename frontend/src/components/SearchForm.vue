@@ -35,19 +35,20 @@
         <!-- Main search input -->
         <div class="relative">
           <label for="search-input" class="sr-only">Search query</label>
-          <input 
+          <textarea
             id="search-input"
-            v-model="prompt" 
-            placeholder="Enter your search query..." 
+            v-model="prompt"
+            placeholder="Enter your search query..."
+            rows="4"
             class="w-full border rounded-lg p-3 pr-12 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
             :class="{ 'border-red-300': promptError }"
-            required 
-            maxlength="1000"
+            required
+            maxlength="4000"
             :disabled="store.isLoading"
             @input="validatePrompt"
-          />
+          ></textarea>
           <div class="absolute right-3 top-3 text-gray-400">
-            <span class="text-sm">{{ prompt.length }}/1000</span>
+            <span class="text-sm">{{ prompt.length }}/4000</span>
           </div>
           <p v-if="promptError" class="mt-1 text-sm text-red-600">{{ promptError }}</p>
         </div>
@@ -135,7 +136,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Searching...
+              Search
             </span>
             <span v-else>Search</span>
           </button>
@@ -174,9 +175,9 @@ const selectedEngines = ref<string[]>([])
 
 // Computed properties
 const isFormValid = computed(() => {
-  return prompt.value.trim().length > 0 && 
-         prompt.value.trim().length <= 1000 && 
-         settings.value.queries >= 1 && 
+  return prompt.value.trim().length > 0 &&
+         prompt.value.trim().length <= 4000 &&
+         settings.value.queries >= 1 &&
          settings.value.queries <= 20 &&
          !promptError.value
 })
@@ -186,8 +187,8 @@ function validatePrompt() {
   const trimmed = prompt.value.trim()
   if (trimmed.length === 0) {
     promptError.value = 'Search query cannot be empty'
-  } else if (trimmed.length > 1000) {
-    promptError.value = 'Search query cannot exceed 1000 characters'
+  } else if (trimmed.length > 4000) {
+    promptError.value = 'Search query cannot exceed 4000 characters'
   } else {
     promptError.value = ''
   }
