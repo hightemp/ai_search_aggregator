@@ -134,8 +134,8 @@ export class WebSocketSearchClient {
           console.error('Max reconnection attempts reached')
           this.callbacks.onError?.({
             code: 'CONNECTION_FAILED',
-            message: 'Не удалось восстановить соединение',
-            details: 'Превышено максимальное количество попыток переподключения'
+            message: 'Failed to restore connection',
+            details: 'Maximum reconnection attempts exceeded'
           })
         }
       })

@@ -41,28 +41,28 @@ export const useSearchStore = defineStore('search', {
       if (!state.error) return ''
       
       const errorMap: Record<string, string> = {
-        'INVALID_REQUEST': 'Неверный формат запроса. Пожалуйста, проверьте введенные данные.',
-        'VALIDATION_FAILED': 'Ошибка валидации данных. Проверьте правильность заполнения полей.',
-        'MISSING_API_KEY': 'Ошибка конфигурации сервера. Обратитесь к администратору.',
-        'QUERY_GENERATION_FAILED': 'Не удалось сгенерировать поисковые запросы. Попробуйте еще раз.',
-        'SEARCH_FAILED': 'Ошибка поиска. Проверьте подключение к интернету и повторите попытку.',
-        'CONTENT_FETCH_FAILED': 'Не удалось загрузить содержимое страниц.',
-        'RESPONSE_ENCODING_FAILED': 'Ошибка обработки ответа сервера.',
-        'INTERNAL_ERROR': 'Внутренняя ошибка сервера. Попробуйте позже.',
-        'CONNECTION_FAILED': 'Ошибка подключения к серверу.',
-        'CONNECTION_LOST': 'Соединение потеряно во время поиска.',
-        'TIMEOUT': 'Превышено время ожидания ответа.',
-        'NETWORK_ERROR': 'Ошибка сети. Проверьте подключение к интернету.',
+        'INVALID_REQUEST': 'Invalid request format. Please check your input.',
+        'VALIDATION_FAILED': 'Validation error. Please verify the fields.',
+        'MISSING_API_KEY': 'Server configuration error. Contact the administrator.',
+        'QUERY_GENERATION_FAILED': 'Failed to generate search queries. Please try again.',
+        'SEARCH_FAILED': 'Search error. Check your internet connection and try again.',
+        'CONTENT_FETCH_FAILED': 'Failed to load page content.',
+        'RESPONSE_ENCODING_FAILED': 'Server response processing error.',
+        'INTERNAL_ERROR': 'Internal server error. Please try again later.',
+        'CONNECTION_FAILED': 'Connection error to the server.',
+        'CONNECTION_LOST': 'Connection lost during search.',
+        'TIMEOUT': 'Response timeout exceeded.',
+        'NETWORK_ERROR': 'Network error. Check your internet connection.',
       }
       
-      return errorMap[state.error.code] || `Неизвестная ошибка: ${state.error.message}`
+      return errorMap[state.error.code] || `Unknown error: ${state.error.message}`
     },
     // Новые getters для WebSocket и таймера
     formattedElapsed: (state): string => {
       const elapsed = state.searchElapsed
-      if (elapsed < 1000) return `${elapsed}мс`
-      if (elapsed < 60000) return `${(elapsed / 1000).toFixed(1)}с`
-      return `${(elapsed / 60000).toFixed(1)}мин`
+      if (elapsed < 1000) return `${elapsed}ms`
+      if (elapsed < 60000) return `${(elapsed / 1000).toFixed(1)}s`
+      return `${(elapsed / 60000).toFixed(1)}min`
     },
     currentElapsed(state): number {
       if (!state.searchStartTime) return state.searchElapsed
@@ -116,8 +116,8 @@ export const useSearchStore = defineStore('search', {
             if (this.loadingState === 'loading') {
               this.error = {
                 code: 'CONNECTION_LOST',
-                message: 'Соединение потеряно во время поиска',
-                details: 'Попробуйте повторить поиск'
+                message: 'Connection lost during search',
+                details: 'Please try the search again'
               }
               this.loadingState = 'error'
               this.searchStatus = null // Очищаем статус при отключении
@@ -184,7 +184,7 @@ export const useSearchStore = defineStore('search', {
         // Неизвестная ошибка
         this.error = {
           code: 'UNKNOWN_ERROR',
-          message: 'Неизвестная ошибка',
+          message: 'Unknown error',
           details: e?.message || String(e),
         }
       }

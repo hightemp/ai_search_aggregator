@@ -37,7 +37,7 @@
           {{ formattedElapsed }}
         </div>
         <div class="text-xs text-blue-600">
-          время поиска
+          search time
         </div>
       </div>
     </div>
@@ -59,13 +59,13 @@ const statusMessage = computed(() => {
   if (store.searchStatus) {
     return store.searchStatus.message
   }
-  return 'Выполняется поиск...'
+  return 'Searching...'
 })
 
 const formattedElapsed = computed(() => {
   const elapsed = store.currentElapsed
-  if (elapsed < 1000) return `${elapsed}мс`
-  if (elapsed < 60000) return `${(elapsed / 1000).toFixed(1)}с`
+  if (elapsed < 1000) return `${elapsed}ms`
+  if (elapsed < 60000) return `${(elapsed / 1000).toFixed(1)}s`
   const minutes = Math.floor(elapsed / 60000)
   const seconds = Math.floor((elapsed % 60000) / 1000)
   return `${minutes}:${seconds.toString().padStart(2, '0')}`

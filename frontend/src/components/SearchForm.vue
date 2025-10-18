@@ -16,13 +16,13 @@
               :disabled="store.isLoading"
               class="text-sm bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1 rounded disabled:opacity-50"
             >
-              Повторить попытку ({{ store.retryCount }}/3)
+              Retry ({{ store.retryCount }}/3)
             </button>
             <button 
               @click="store.clearError()"
               class="text-sm text-red-600 hover:text-red-800"
             >
-              Закрыть
+              Close
             </button>
           </div>
         </div>
@@ -34,11 +34,11 @@
       <div class="flex flex-col gap-4">
         <!-- Main search input -->
         <div class="relative">
-          <label for="search-input" class="sr-only">Поисковый запрос</label>
+          <label for="search-input" class="sr-only">Search query</label>
           <input 
             id="search-input"
             v-model="prompt" 
-            placeholder="Введите ваш поисковый запрос..." 
+            placeholder="Enter your search query..." 
             class="w-full border rounded-lg p-3 pr-12 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
             :class="{ 'border-red-300': promptError }"
             required 
@@ -56,7 +56,7 @@
         <div class="flex items-center gap-4 flex-wrap">
           <!-- Queries count -->
           <div class="flex items-center gap-2">
-            <label for="queries-input" class="text-sm font-medium text-gray-700">Запросов:</label>
+            <label for="queries-input" class="text-sm font-medium text-gray-700">Queries:</label>
             <input 
               id="queries-input"
               type="number" 
@@ -76,12 +76,12 @@
               :disabled="store.isLoading"
               class="rounded text-blue-600 focus:ring-blue-500"
             />
-            <span>Анализ содержимого страниц</span>
+            <span>Page content analysis</span>
             <button 
               type="button"
               @click="showContentModeHelp = !showContentModeHelp"
               class="text-gray-400 hover:text-gray-600"
-              aria-label="Справка по анализу содержимого"
+              aria-label="Content analysis help"
             >
               <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
@@ -97,7 +97,7 @@
               :disabled="store.isLoading"
               @click="toggleEngines"
             >
-              <span>Поисковики</span>
+              <span>Search engines</span>
               <span v-if="selectedEngines.length > 0" class="bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full">
                 {{ selectedEngines.length }}
               </span>
@@ -108,13 +108,13 @@
             
             <div v-if="openEngines" class="absolute z-10 mt-1 w-64 bg-white border rounded-lg shadow-lg p-3 max-h-64 overflow-auto">
               <div class="flex justify-between items-center mb-2">
-                <span class="text-sm font-medium text-gray-700">Выберите поисковики:</span>
+                <span class="text-sm font-medium text-gray-700">Select search engines:</span>
                 <button 
                   type="button" 
                   @click="selectedEngines = []"
                   class="text-xs text-blue-600 hover:text-blue-800"
                 >
-                  Очистить
+                  Clear
                 </button>
               </div>
               <label v-for="eng in availableEngines" :key="eng" class="flex items-center gap-2 text-sm py-1 hover:bg-gray-50 rounded px-1 cursor-pointer">
@@ -135,15 +135,15 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Поиск...
+              Searching...
             </span>
-            <span v-else>Найти</span>
+            <span v-else>Search</span>
           </button>
         </div>
 
         <!-- Help text for content mode -->
         <div v-if="showContentModeHelp" class="p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-          <p><strong>Анализ содержимого страниц:</strong> Загружает содержимое найденных страниц и фильтрует результаты по релевантности с помощью ИИ. Повышает качество результатов, но увеличивает время поиска.</p>
+          <p><strong>Page content analysis:</strong> Downloads the content of found pages and filters results for relevance using AI. Improves the quality of results but increases search time.</p>
         </div>
       </div>
     </form>
@@ -185,9 +185,9 @@ const isFormValid = computed(() => {
 function validatePrompt() {
   const trimmed = prompt.value.trim()
   if (trimmed.length === 0) {
-    promptError.value = 'Поисковый запрос не может быть пустым'
+    promptError.value = 'Search query cannot be empty'
   } else if (trimmed.length > 1000) {
-    promptError.value = 'Поисковый запрос не может превышать 1000 символов'
+    promptError.value = 'Search query cannot exceed 1000 characters'
   } else {
     promptError.value = ''
   }

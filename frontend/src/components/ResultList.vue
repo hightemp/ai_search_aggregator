@@ -5,8 +5,8 @@
       <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
       </svg>
-      <h3 class="mt-2 text-lg font-medium text-gray-900">Результатов пока нет</h3>
-      <p class="mt-1 text-gray-500">Введите поисковый запрос выше чтобы начать поиск</p>
+      <h3 class="mt-2 text-lg font-medium text-gray-900">No results yet</h3>
+      <p class="mt-1 text-gray-500">Enter a search query above to start</p>
     </div>
 
     <!-- Results -->
@@ -16,10 +16,10 @@
         <div class="flex items-center justify-between flex-wrap gap-2">
           <div class="flex items-center gap-4 text-sm text-gray-600">
             <span v-if="items.length > 0">
-              <strong>{{ items.length }}</strong> результатов найдено
+              <strong>{{ items.length }}</strong> results found
             </span>
             <span v-if="queries.length > 0">
-              <strong>{{ queries.length }}</strong> запросов выполнено
+              <strong>{{ queries.length }}</strong> queries executed
             </span>
           </div>
           <div class="flex gap-2">
@@ -27,14 +27,14 @@
               @click="showQueries = !showQueries"
               class="text-sm text-blue-600 hover:text-blue-800 transition-colors"
             >
-              {{ showQueries ? 'Скрыть' : 'Показать' }} запросы
+              {{ showQueries ? 'Hide' : 'Show' }} queries
             </button>
           </div>
         </div>
         
         <!-- Generated queries -->
         <div v-if="showQueries && queries.length > 0" class="mt-3 pt-3 border-t border-gray-200">
-          <p class="text-sm font-medium text-gray-700 mb-2">Сгенерированные поисковые запросы:</p>
+          <p class="text-sm font-medium text-gray-700 mb-2">Generated search queries:</p>
           <div class="flex flex-wrap gap-2">
             <span 
               v-for="(query, idx) in queries" 
@@ -61,7 +61,7 @@
       <!-- Load more placeholder (for future pagination) -->
       <div v-if="items.length >= 20" class="mt-8 text-center">
         <p class="text-gray-500 text-sm">
-          Показаны первые {{ items.length }} результатов
+          Showing first {{ items.length }} results
         </p>
       </div>
     </div>

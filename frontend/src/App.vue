@@ -12,7 +12,7 @@
             </div>
             <div>
               <h1 class="text-xl font-bold text-gray-900">AI Search Aggregator</h1>
-              <p class="text-sm text-gray-500 hidden sm:block">Умный поиск с множественными запросами</p>
+              <p class="text-sm text-gray-500 hidden sm:block">Intelligent search with multiple queries</p>
             </div>
           </div>
           
@@ -47,12 +47,12 @@
             
             <!-- Quick tips -->
             <div v-if="store.loadingState === 'idle'" class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <h3 class="font-medium text-blue-900 mb-2">💡 Советы для поиска:</h3>
+              <h3 class="font-medium text-blue-900 mb-2">💡 Search tips:</h3>
               <ul class="text-sm text-blue-800 space-y-1">
-                <li>• Формулируйте вопросы конкретно</li>
-                <li>• Используйте ключевые слова</li>
-                <li>• Включите анализ контента для лучших результатов</li>
-                <li>• Используйте Ctrl+Enter для быстрого поиска</li>
+                <li>• Be specific with your questions</li>
+                <li>• Use keywords</li>
+                <li>• Enable content analysis for better results</li>
+                <li>• Use Ctrl+Enter to search quickly</li>
               </ul>
             </div>
           </div>
@@ -77,10 +77,10 @@
     <footer class="bg-white border-t border-gray-200 mt-16">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div class="flex justify-between items-center text-sm text-gray-600">
-          <p>&copy; 2025 AI Search Aggregator. Создано с использованием Vue 3 и Go.</p>
+          <p>&copy; 2025 AI Search Aggregator. Built with Vue 3 and Go.</p>
           <div class="flex gap-4">
-            <a href="#" class="hover:text-gray-900 transition-colors">О проекте</a>
-            <a href="#" class="hover:text-gray-900 transition-colors">Помощь</a>
+            <a href="#" class="hover:text-gray-900 transition-colors">About</a>
+            <a href="#" class="hover:text-gray-900 transition-colors">Help</a>
           </div>
         </div>
       </div>
@@ -99,13 +99,13 @@ const store = useSearchStore()
 
 const statusText = computed(() => {
   switch (store.loadingState) {
-    case 'loading': return 'Поиск...'
+    case 'loading': return 'Searching...'
     case 'success': {
       const time = store.formattedElapsed
-      return `${store.results.length} результатов (${time})`
+      return `${store.results.length} results (${time})`
     }
-    case 'error': return 'Ошибка'
-    default: return 'Готов к поиску'
+    case 'error': return 'Error'
+    default: return 'Ready to search'
   }
 })
 </script>

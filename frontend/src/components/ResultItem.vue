@@ -49,7 +49,7 @@
           @click="copyUrl"
           class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity p-1"
           :class="{ 'text-green-600': urlCopied }"
-          :title="urlCopied ? 'Скопировано!' : 'Копировать ссылку'"
+          :title="urlCopied ? 'Copied!' : 'Copy link'"
         >
           <svg v-if="!urlCopied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -64,7 +64,7 @@
     <!-- Snippet with highlighting -->
     <div class="text-gray-700 leading-relaxed">
       <p v-if="item.snippet" class="text-sm">{{ item.snippet }}</p>
-      <p v-else class="text-sm text-gray-400 italic">Нет описания</p>
+      <p v-else class="text-sm text-gray-400 italic">No description</p>
     </div>
 
     <!-- Actions -->
@@ -76,7 +76,7 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
         </svg>
-        Открыть
+        Open
       </button>
       
       <button 
@@ -86,7 +86,7 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
         </svg>
-        Поделиться
+        Share
       </button>
     </div>
   </article>
@@ -109,7 +109,7 @@ const urlCopied = ref(false)
 
 // Computed properties
 const displayTitle = computed(() => {
-  return props.item.title || 'Без названия'
+  return props.item.title || 'Untitled'
 })
 
 const domain = computed(() => {
